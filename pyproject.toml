@@ -1,0 +1,68 @@
+[project]
+name = "aicademy"
+version = "0.1.0"
+description = "Aicademy Practice CLI — solve Kubernetes exam scenarios locally with KIND"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Aicademy", email = "hello@aicademy.ac" }]
+license = { text = "MIT" }
+keywords = ["kubernetes", "cka", "ckad", "cks", "cli", "practice", "devops"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Topic :: Education",
+    "Topic :: System :: Systems Administration",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "typer[all]>=0.12.0",
+    "rich>=13.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+aicademy = "aicademy_cli.main:app"
+
+[project.urls]
+Homepage = "https://aicademy.ac/practice"
+Repository = "https://github.com/devcrypted/aicademy-cli"
+Issues = "https://github.com/devcrypted/aicademy-cli/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aicademy_cli"]
+
+[tool.uv]
+link-mode = "copy"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.8",
+    "ruff>=0.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "I"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = false
+ignore_missing_imports = true
