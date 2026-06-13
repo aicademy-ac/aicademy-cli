@@ -2,9 +2,8 @@
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
-from . import auth, question, tools
-from .verify import app_verify
+from .commands import auth, question, tools
+from .commands.verify import app_verify
 
 console = Console()
 
@@ -65,7 +64,7 @@ def _version_callback(value: bool) -> None:
     if value:
         from importlib.metadata import version, PackageNotFoundError
         try:
-            v = version("aicademy-cli")
+            v = version("aicademy")
         except PackageNotFoundError:
             v = "dev"
         console.print(f"[bold cyan]aicademy-cli[/bold cyan] version [white]{v}[/white]")
@@ -96,3 +95,6 @@ def main(
     """
     if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
+
+if __name__ == "__main__":
+    app()

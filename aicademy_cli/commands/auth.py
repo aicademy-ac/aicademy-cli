@@ -1,17 +1,15 @@
 """Authentication commands — login & logout"""
 
-import sys
 import webbrowser
 import typer
-import httpx
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
-from . import config
+from .. import config, api
+from ..core import utils
 
 console = Console()
 app = typer.Typer(help="Authenticate with Aicademy")
-
 
 @app.command()
 def login(
@@ -52,30 +50,25 @@ def login(
     # Verify the token against the API
     console.print("\n[dim]Verifying token...[/dim]")
     try:
-        resp = httpx.post(
-            f"{config.API_BASE_URL}/api/auth/cli-token",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if resp.status_code == 401:
+        api.verify_token(token)
+    except api.APIError as e:
+        if e.status_code == 401:
             console.print("[red]✗ Token is invalid or expired. Please try again.[/red]")
-            raise typer.Exit(1)
-
-        cfg["token"] = token
-        config.save_config(cfg)
-        console.print(
-            Panel(
-                "[bold green]✓ Logged in successfully![/bold green]\n\n"
-                f"Your token is stored in [dim]~/.aicademy/config.json[/dim]\n"
-                "It expires in [bold]7 days[/bold]. Run [bold]aicademy login[/bold] again to renew.",
-                title="✅  Success",
-                border_style="green",
-            )
-        )
-    except httpx.RequestError as exc:
-        console.print(f"[red]✗ Network error: {exc}[/red]")
+        else:
+            utils.format_access_error(e)
         raise typer.Exit(1)
 
+    cfg["token"] = token
+    config.save_config(cfg)
+    console.print(
+        Panel(
+            "[bold green]✓ Logged in successfully![/bold green]\n\n"
+            f"Your token is stored in [dim]~/.aicademy/config.json[/dim]\n"
+            "It expires in [bold]7 days[/bold]. Run [bold]aicademy login[/bold] again to renew.",
+            title="✅  Success",
+            border_style="green",
+        )
+    )
 
 @app.command()
 def logout() -> None:
@@ -86,39 +79,24 @@ def logout() -> None:
         raise typer.Exit()
 
     token = cfg.get("token")
-    try:
-        httpx.delete(
-            f"{config.API_BASE_URL}/api/auth/cli-token",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=5,
-        )
-    except httpx.RequestError:
-        pass  # Fail silently — we'll clear locally regardless
+    api.logout(token)
 
     cfg.pop("token", None)
     cfg.pop("active_session", None)
     config.save_config(cfg)
     console.print("[bold green]✓ Logged out successfully.[/bold green]")
 
-
 @app.command()
 def whoami() -> None:
     """Show the currently logged-in user."""
-    token = config.get_token()
-    if not token:
-        console.print("[yellow]Not logged in.[/yellow] Run [bold]aicademy login[/bold] first.")
-        raise typer.Exit()
+    token = utils.require_auth()
 
     try:
-        resp = httpx.get(
-            f"{config.API_BASE_URL}/api/practice/sessions",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            console.print("[red]Token expired.[/red] Please run [bold]aicademy login[/bold] again.")
-            raise typer.Exit(1)
+        api.get_sessions()
         console.print("[green]✓ Logged in[/green] — token is valid.")
-    except httpx.RequestError as exc:
-        console.print(f"[red]✗ Network error: {exc}[/red]")
+    except api.APIError as e:
+        if e.status_code == 401:
+            console.print("[red]Token expired.[/red] Please run [bold]aicademy login[/bold] again.")
+        else:
+            utils.format_access_error(e)
         raise typer.Exit(1)

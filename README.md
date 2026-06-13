@@ -86,12 +86,21 @@ aicademy question clear
 ## Categories
 
 | Exam                                       | Slug   | Questions | Free |
-| ------------------------------------------ | ------ | --------- | ---- |
+| --------------------------------------------| --------| -----------| ------|
 | Certified Kubernetes Administrator         | `cka`  | 20        | 10   |
 | Certified Kubernetes Application Developer | `ckad` | 20        | 10   |
 | Certified Kubernetes Security Specialist   | `cks`  | 20        | 10   |
 
 ## Development
+
+### Project Structure
+
+The codebase is organized modularly:
+
+- `aicademy_cli/main.py`: The entry point and top-level Typer application.
+- `aicademy_cli/commands/`: All user-facing Typer CLI groups (`auth`, `question`, `tools`, `verify`).
+- `aicademy_cli/api.py`: Centralized HTTP requests and error handling.
+- `aicademy_cli/core/`: Internal logic like cluster management (`kind.py`) and helper methods (`utils.py`).
 
 ### Using uv
 
