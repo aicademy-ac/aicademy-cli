@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Aicademy Practice CLI — solve Kubernetes exam scenarios locally with KIND"
 readme = "README.md"
 requires-python = ">=3.9"
-authors = [{ name = "Aicademy", email = "hello@aicademy.ac" }]
+authors = [{ name = "Aicademy", email = "info@aicademy.ac" }]
 license = { text = "MIT" }
 keywords = ["kubernetes", "cka", "ckad", "cks", "cli", "practice", "devops"]
 classifiers = [
@@ -24,10 +24,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "typer[all]>=0.12.0",
-    "rich>=13.0.0",
-    "httpx>=0.27.0",
-    "python-dotenv>=1.2.1",
+    "typer",
+    "rich>=15.0.0",
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]
@@ -54,6 +53,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "mypy>=1.8",
     "ruff>=0.3",
+    "python-dotenv>=1.2.1",
 ]
 
 [tool.ruff]
