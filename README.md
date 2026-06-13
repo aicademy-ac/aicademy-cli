@@ -9,16 +9,19 @@
 ## Installation
 
 ### Using pip
+
 ```bash
 pip install aicademy
 ```
 
 ### Using uv (recommended)
+
 ```bash
 uv tool install aicademy
 ```
 
 ### Using pipx
+
 ```bash
 pipx install aicademy
 ```
@@ -50,47 +53,48 @@ aicademy question clear
 
 ## Command Reference
 
-| Command | Description |
-|---|---|
-| `aicademy login` | Authenticate (browser flow or direct token) |
-| `aicademy logout` | Clear stored credentials |
-| `aicademy auth whoami` | Verify token validity |
-| `aicademy question start <id>` | Start question environment (creates KIND cluster) |
-| `aicademy question instructions [id]` | Show full task instructions in terminal |
-| `aicademy question instructions [id] --web` | Open question page in browser |
-| `aicademy question clear [id]` | Delete KIND cluster and clear session |
-| `aicademy verify [id]` | Run verify.sh and report result |
-| `aicademy install-tool <name>` | Install kubectl / kind / docker / all |
-| `aicademy install-tool <name> --check` | Check if tool is installed (no install) |
-| `aicademy install-tool <name> --dry-run` | Preview install commands |
+| Command                                     | Description                                       |
+| ------------------------------------------- | ------------------------------------------------- |
+| `aicademy login`                            | Authenticate (browser flow or direct token)       |
+| `aicademy logout`                           | Clear stored credentials                          |
+| `aicademy auth whoami`                      | Verify token validity                             |
+| `aicademy question start <id>`              | Start question environment (creates KIND cluster) |
+| `aicademy question instructions [id]`       | Show full task instructions in terminal           |
+| `aicademy question instructions [id] --web` | Open question page in browser                     |
+| `aicademy question clear [id]`              | Delete KIND cluster and clear session             |
+| `aicademy verify [id]`                      | Run verify.sh and report result                   |
+| `aicademy install-tool <name>`              | Install kubectl / kind / docker / all             |
+| `aicademy install-tool <name> --check`      | Check if tool is installed (no install)           |
+| `aicademy install-tool <name> --dry-run`    | Preview install commands                          |
 
 ## Prerequisites
 
-| Tool | Purpose | Install |
-|---|---|---|
-| Docker | Runs KIND nodes | `aicademy install-tool docker` |
-| kubectl | Kubernetes CLI | `aicademy install-tool kubectl` |
-| kind | Local K8s cluster | `aicademy install-tool kind` |
+| Tool    | Purpose           | Install                         |
+| ------- | ----------------- | ------------------------------- |
+| Docker  | Runs KIND nodes   | `aicademy install-tool docker`  |
+| kubectl | Kubernetes CLI    | `aicademy install-tool kubectl` |
+| kind    | Local K8s cluster | `aicademy install-tool kind`    |
 
 ## OS Support
 
-| OS | Package Manager |
-|---|---|
-| Windows | winget |
-| macOS | Homebrew |
-| Linux | Official shell scripts |
+| OS      | Package Manager        |
+| ---------| ------------------------|
+| Windows | winget                 |
+| macOS   | Homebrew               |
+| Linux   | Official shell scripts |
 
 ## Categories
 
-| Exam | Slug | Questions | Free |
-|---|---|---|---|
-| Certified Kubernetes Administrator | `cka` | 20 | 10 |
-| Certified Kubernetes Application Developer | `ckad` | 20 | 10 |
-| Certified Kubernetes Security Specialist | `cks` | 20 | 10 |
+| Exam                                       | Slug   | Questions | Free |
+| ------------------------------------------ | ------ | --------- | ---- |
+| Certified Kubernetes Administrator         | `cka`  | 20        | 10   |
+| Certified Kubernetes Application Developer | `ckad` | 20        | 10   |
+| Certified Kubernetes Security Specialist   | `cks`  | 20        | 10   |
 
 ## Development
 
 ### Using uv
+
 ```bash
 # Clone and install in dev mode
 git clone https://github.com/devcrypted/aicademy-cli
@@ -109,6 +113,7 @@ uv run mypy aicademy_cli/
 ```
 
 ### Building the wheel
+
 ```bash
 # Build wheel + sdist
 uv build
@@ -120,6 +125,7 @@ ls dist/
 ```
 
 ### Publishing to PyPI
+
 ```bash
 # Test on TestPyPI first
 uv publish --index testpypi
@@ -137,4 +143,4 @@ uv publish
 
 ## License
 
-MIT © [Aicademy](https://aicademy.ac)
+MIT © [Aicademy](https://www.aicademy.ac)

@@ -4,6 +4,12 @@ import os
 import json
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ─── API Config ────────────────────────────────────────────────────────────────
 API_BASE_URL = os.environ.get("AICADEMY_API_URL", "https://www.aicademy.ac")
 

@@ -28,6 +28,16 @@ def require_auth() -> str:
     return token
 
 
+def normalize_question_id(qid: str | None) -> str | None:
+    """Zero-pad single-digit question IDs (e.g. cka-1 -> cka-01)"""
+    if not qid:
+        return qid
+    parts = qid.split("-")
+    if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 1:
+        return f"{parts[0]}-0{parts[1]}"
+    return qid
+
+
 def check_prerequisites() -> bool:
     """Check that docker, kind, and kubectl are installed."""
     missing = []
@@ -98,10 +108,13 @@ def start(
     """
     require_auth()
 
+    question_id = normalize_question_id(question_id)
+
     if not check_prerequisites():
         raise typer.Exit(1)
 
     console.print(f"\n[bold cyan]Starting question [white]{question_id}[/white]...[/bold cyan]")
+
 
     cluster_name = f"aicademy-{question_id}"
 
@@ -195,7 +208,7 @@ def instructions(
         )
         raise typer.Exit(1)
 
-    qid = question_id or session.get("questionId")
+    qid = normalize_question_id(question_id) or session.get("questionId")
 
     if web:
         import webbrowser
@@ -284,6 +297,7 @@ def clear(
     """
     require_auth()
 
+    question_id = normalize_question_id(question_id)
     session = config.get_active_session()
     if not session and not question_id:
         console.print("[yellow]No active session found.[/yellow]")
