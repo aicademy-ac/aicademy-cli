@@ -1,24 +1,58 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
-  # Optionally allow manual triggers
+  push:
+    branches:
+      - main
+    paths:
+      - pyproject.toml
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Force publish (bypass version check)"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
+  check-version:
+    name: Check if version changed
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check version on PyPI
+        id: check
+        run: |
+          PACKAGE_NAME=$(grep -E '^name = ' pyproject.toml | cut -d'"' -f2)
+          CURRENT_VERSION=$(grep -E '^version = ' pyproject.toml | cut -d'"' -f2)
+          
+          # Query PyPI for this specific version
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PACKAGE_NAME/$CURRENT_VERSION/json")
+          
+          FORCE_RUN="${{ github.event.inputs.force }}"
+          
+          if [ "$STATUS_CODE" == "404" ] || [ "$FORCE_RUN" == "true" ]; then
+            echo "Version $CURRENT_VERSION not found on PyPI (or manual run). Publishing!"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $CURRENT_VERSION already exists on PyPI. Skipping publish."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   pypi-publish:
     name: Build and publish Python package
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
-    
-    # Specifying a GitHub environment is strongly encouraged for Trusted Publishing
     environment: pypi
-    
     permissions:
-      # IMPORTANT: this permission is mandatory for trusted publishing
       id-token: write
-      contents: read
-
+      contents: write  # Needed to create a GitHub Release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,3 +70,10 @@ jobs:
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: Release v${{ needs.check-version.outputs.version }}
+          generate_release_notes: true
