@@ -1,22 +1,60 @@
-name: Publish to PyPI
+name: CI & Publish
 
 on:
   push:
     branches:
       - main
-    paths:
-      - pyproject.toml
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      force:
-        description: "Force publish (bypass version check)"
-        required: false
-        type: boolean
-        default: true
 
 jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run Pytest
+        run: uv run pytest
+
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tool
+        run: python -m pip install --upgrade build
+
+      - name: Build a binary wheel and a source tarball
+        run: python -m build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
   check-version:
-    name: Check if version changed
+    name: Check Version
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.check.outputs.changed }}
@@ -30,13 +68,10 @@ jobs:
           PACKAGE_NAME=$(grep -E '^name = ' pyproject.toml | cut -d'"' -f2)
           CURRENT_VERSION=$(grep -E '^version = ' pyproject.toml | cut -d'"' -f2)
           
-          # Query PyPI for this specific version
           STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PACKAGE_NAME/$CURRENT_VERSION/json")
           
-          FORCE_RUN="${{ github.event.inputs.force }}"
-          
-          if [ "$STATUS_CODE" == "404" ] || [ "$FORCE_RUN" == "true" ]; then
-            echo "Version $CURRENT_VERSION not found on PyPI (or manual run). Publishing!"
+          if [ "$STATUS_CODE" == "404" ]; then
+            echo "Version $CURRENT_VERSION is new. Will publish if tests pass."
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           else
@@ -44,29 +79,23 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  pypi-publish:
-    name: Build and publish Python package
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
+  publish:
+    name: Publish to PyPI & GitHub Releases
+    needs: [test, build, check-version]
+    if: needs.check-version.outputs.changed == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
-      contents: write  # Needed to create a GitHub Release
+      contents: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-
-      - name: Install build tool
-        run: python -m pip install --upgrade build
-
-      - name: Build a binary wheel and a source tarball
-        run: python -m build
+          name: dist
+          path: dist/
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
