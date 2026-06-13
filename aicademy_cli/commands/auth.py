@@ -79,7 +79,10 @@ def logout() -> None:
         raise typer.Exit()
 
     token = cfg.get("token")
-    api.logout(token)
+    try:
+        api.logout(token)
+    except api.APIError as e:
+        console.print(f"[dim yellow]⚠ Could not sync logout to server (token may already be invalid): {e.response_data}[/dim yellow]")
 
     cfg.pop("token", None)
     cfg.pop("active_session", None)

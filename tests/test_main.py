@@ -13,4 +13,4 @@ def test_app_version():
     """Test that the CLI version command works."""
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "aicademy-cli version" in result.stdout
+    assert "aicademy version" in result.stdout

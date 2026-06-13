@@ -5,20 +5,88 @@ import webbrowser
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.table import Table
+from rich import box
+from rich.prompt import Prompt
 from .. import config, api
 from ..core import utils, kind
 
 console = Console()
 app = typer.Typer(help="Manage practice question sessions")
 
+@app.command("list")
+def list_questions() -> None:
+    """List all available questions and your progress."""
+    utils.require_auth()
+    try:
+        data = api.get_all_questions()
+    except api.APIError as e:
+        console.print(f"[red]✗ Failed to load questions: {e.response_data}[/red]")
+        raise typer.Exit(1)
+
+    questions = data.get("questions", [])
+    if not questions:
+        console.print("[yellow]No questions found.[/yellow]")
+        raise typer.Exit()
+
+    # Group by category
+    categories = {}
+    for q in questions:
+        cat = q.get("categoryId", "other")
+        if cat not in categories:
+            categories[cat] = {"title": q.get("categoryTitle", cat.upper()), "qs": []}
+        categories[cat]["qs"].append(q)
+
+    for cat_id, cat_data in categories.items():
+        table = Table(
+            show_header=True,
+            header_style="bold cyan",
+            box=box.ROUNDED,
+            title=f"[bold white]{cat_data['title']}[/bold white]",
+            title_style="bold",
+            title_justify="left"
+        )
+        table.add_column("Status", width=18)
+        table.add_column("ID", style="cyan", width=10)
+        table.add_column("Title")
+        table.add_column("Level", width=12)
+
+        for q in cat_data["qs"]:
+            if q.get("passed"):
+                status_icon = "[bold green]\\[x] Passed[/bold green]"
+            elif q.get("status") == "active":
+                status_icon = "[bold yellow]\\[>] Active[/bold yellow]"
+            else:
+                status_icon = "[dim]\\[ ] Unattempted[/dim]"
+            
+            table.add_row(
+                status_icon,
+                q.get("id"),
+                q.get("title"),
+                q.get("level", "").capitalize()
+            )
+        console.print(table)
+        console.print()
+
+
 @app.command()
 def start(
-    question_id: str = typer.Argument(..., help="Question ID to start, e.g. cka-01"),
+    question_id: str = typer.Argument(None, help="Question ID to start, e.g. cka-01"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full command output"),
 ) -> None:
     """
     Start a practice question environment.
     """
     utils.require_auth()
+    
+    if not question_id:
+        # Interactive selection
+        list_questions()
+        console.print()
+        question_id = Prompt.ask("[bold]Enter the ID of the question you want to start[/bold]")
+        if not question_id:
+            raise typer.Exit()
+
     question_id = utils.normalize_question_id(question_id)
 
     if not utils.check_prerequisites():
@@ -31,11 +99,50 @@ def start(
     try:
         data = api.start_session(question_id, cluster_name)
     except api.APIError as e:
-        if e.status_code in (402, 409):
+        if e.status_code == 409:
+            import json
+            err_data = e.response_data
+            if isinstance(err_data, str):
+                try:
+                    err_data = json.loads(err_data)
+                except Exception:
+                    pass
+
+            if isinstance(err_data, dict) and "message" in err_data:
+                try:
+                    inner_data = json.loads(err_data["message"])
+                    if isinstance(inner_data, dict):
+                        err_data = inner_data
+                except Exception:
+                    pass
+            
+            if isinstance(err_data, dict) and err_data.get("code") == "SESSION_ACTIVE":
+                active_qid = err_data.get("activeQuestionId", "unknown")
+                active_sid = err_data.get("activeSessionId")
+                
+                console.print(f"\n[yellow]X You already have an active session for question [bold]{active_qid}[/bold].[/yellow]")
+                if typer.confirm(f"Would you like to clear '{active_qid}' and start '{question_id}' instead?"):
+                    kind.delete_cluster(f"aicademy-{active_qid}", verbose=verbose)
+                    if active_sid:
+                        try:
+                            api.abandon_session(active_sid)
+                        except api.APIError as e:
+                            console.print(f"[dim yellow]⚠ Could not sync abandoned session to server: {e.response_data}[/dim yellow]")
+                    config.set_active_session(None)
+                    
+                    console.print(f"\n[bold cyan]Retrying: Starting question [white]{question_id}[/white]...[/bold cyan]")
+                    data = api.start_session(question_id, cluster_name)
+                else:
+                    raise typer.Exit()
+            else:
+                utils.format_access_error(e)
+                raise typer.Exit(1)
+        elif e.status_code == 402:
             utils.format_access_error(e)
+            raise typer.Exit(1)
         else:
             console.print(f"[red]✗ API error ({e.status_code}): {e.response_data}[/red]")
-        raise typer.Exit(1)
+            raise typer.Exit(1)
 
     session = data
     question = data.get("question", {})
@@ -51,7 +158,7 @@ def start(
     )
 
     # Create KIND cluster
-    kind.create_cluster(cluster_name)
+    kind.create_cluster(cluster_name, verbose=verbose)
 
     # Print success panel
     console.print(
@@ -154,6 +261,7 @@ def instructions(
 @app.command()
 def clear(
     question_id: str = typer.Argument(None, help="Question ID (auto-detected from active session)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full command output"),
 ) -> None:
     """Clean up the practice environment."""
     utils.require_auth()
@@ -168,11 +276,14 @@ def clear(
     cluster_name = (session or {}).get("clusterName") or f"aicademy-{question_id}"
 
     # Delete KIND cluster
-    kind.delete_cluster(cluster_name)
+    kind.delete_cluster(cluster_name, verbose=verbose)
 
     # Mark session as abandoned via API
     if session_id:
-        api.abandon_session(session_id)
+        try:
+            api.abandon_session(session_id)
+        except api.APIError as e:
+            console.print(f"[dim yellow]⚠ Could not sync abandoned session to server: {e.response_data}[/dim yellow]")
 
     config.set_active_session(None)
     console.print(

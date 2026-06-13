@@ -41,8 +41,8 @@ def _request(method: str, url: str, **kwargs) -> dict:
 
 def verify_token(token: str) -> dict:
     return _request(
-        "POST",
-        f"{config.API_BASE_URL}/api/auth/cli-token",
+        "GET",
+        f"{config.API_BASE_URL}/api/cli-token",
         headers=_get_headers(token),
         timeout=10,
     )
@@ -50,12 +50,12 @@ def verify_token(token: str) -> dict:
 def logout(token: str) -> None:
     try:
         httpx.delete(
-            f"{config.API_BASE_URL}/api/auth/cli-token",
+            f"{config.API_BASE_URL}/api/cli-token",
             headers=_get_headers(token),
             timeout=5,
         )
-    except httpx.RequestError:
-        pass
+    except httpx.RequestError as exc:
+        raise APIError(f"Network error: {exc}", 0, str(exc))
 
 def get_sessions() -> dict:
     return _request(
@@ -84,23 +84,37 @@ def get_question(category: str, question_id: str) -> dict:
         timeout=10,
     )
 
+def get_all_questions() -> dict:
+    return _request(
+        "GET",
+        f"{config.API_BASE_URL}/api/practice/questions",
+        headers=_get_headers(),
+        timeout=10,
+    )
+
 def abandon_session(session_id: str) -> None:
     try:
-        httpx.patch(
+        resp = httpx.patch(
             f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
             headers=_get_headers(),
             timeout=10,
         )
-    except httpx.RequestError:
-        pass
+        resp.raise_for_status()
+    except httpx.RequestError as exc:
+        raise APIError(f"Network error: {exc}", 0, str(exc))
+    except httpx.HTTPStatusError as exc:
+        raise APIError(f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}", exc.response.status_code, exc.response.text)
 
 def verify_session(session_id: str, result: dict) -> None:
     try:
-        httpx.post(
-            f"{config.API_BASE_URL}/api/practice/sessions/{session_id}/verify",
+        resp = httpx.post(
+            f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
             json=result,
             headers=_get_headers(),
             timeout=10,
         )
-    except httpx.RequestError:
-        pass
+        resp.raise_for_status()
+    except httpx.RequestError as exc:
+        raise APIError(f"Network error: {exc}", 0, str(exc))
+    except httpx.HTTPStatusError as exc:
+        raise APIError(f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}", exc.response.status_code, exc.response.text)

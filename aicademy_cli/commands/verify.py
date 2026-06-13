@@ -1,5 +1,6 @@
 """Verify command — runs the local verify.sh and reports results to the API"""
 
+import sys
 import subprocess
 from pathlib import Path
 import typer
@@ -21,7 +22,7 @@ def app_verify(
     session = config.get_active_session()
     if not session and not question_id:
         console.print(
-            "[red]✗ No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
+            "[red]X No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
         )
         raise typer.Exit(1)
 
@@ -31,69 +32,85 @@ def app_verify(
 
     console.print(f"[bold cyan]Verifying question:[/bold cyan] [white]{qid}[/white]\n")
 
-    # Locate verify script
-    script_candidates = [
-        Path(__file__).parent.parent.parent / "questions" / cat / qid / "verify.sh",
-        Path.cwd() / "verify.sh",
-    ]
+    # Fetch verify script from API
+    verify_script_content = None
+    try:
+        qdata = api.get_question(cat, qid)
+        verify_script_content = qdata.get("verifyScript")
+    except Exception as e:
+        console.print(f"[yellow]! Could not fetch verify script from API: {e}[/yellow]")
 
-    verify_script = None
-    for candidate in script_candidates:
-        if candidate.exists():
-            verify_script = candidate
-            break
+    if not verify_script_content:
+        console.print("[red]X No verify script found for this question via API.[/red]")
+        raise typer.Exit(1)
 
-    if not verify_script:
-        console.print(
-            "[yellow]⚠ verify.sh not found locally.[/yellow]\n"
-            "Reporting a manual verification — please confirm your solution is correct."
+    # Fix line endings for bash on Windows
+    verify_script_content = verify_script_content.replace("\r", "")
+    
+    if sys.platform == "win32":
+        verify_script_content = """
+if command -v kubectl.exe &> /dev/null; then
+    kubectl() {
+        kubectl.exe "$@" < /dev/null
+    }
+fi
+""" + verify_script_content
+    
+    console.print(f"[dim]Running verify script from API...[/dim]\n")
+    try:
+        proc = subprocess.run(
+            ["bash"],
+            input=verify_script_content.encode("utf-8"),
+            capture_output=True,
+            timeout=120,
         )
-        passed = typer.confirm("Did your solution pass?", default=True)
-        result = {"passed": passed, "message": "Manual verification by user."}
-    else:
-        console.print(f"[dim]Running:[/dim] {verify_script}\n")
-        try:
-            proc = subprocess.run(
-                ["bash", str(verify_script)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            passed = proc.returncode == 0
-            message = proc.stdout.strip() or proc.stderr.strip() or "Verify script completed."
-            result = {"passed": passed, "message": message}
-        except subprocess.TimeoutExpired:
-            console.print("[red]✗ Verify script timed out (120s).[/red]")
-            raise typer.Exit(1)
-        except FileNotFoundError:
-            console.print("[red]✗ bash not found. Install Git Bash or WSL on Windows.[/red]")
-            raise typer.Exit(1)
-
-    # Display result
+        passed = proc.returncode == 0
+        message = (proc.stdout.decode("utf-8", errors="replace") + "\n" + proc.stderr.decode("utf-8", errors="replace")).strip() or "Verify script completed."
+        message = message.encode("cp1252", errors="replace").decode("cp1252")
+        result = {"passed": passed, "message": message}
+    except subprocess.TimeoutExpired:
+        console.print("[red]⚠ Verification script timed out.[/red]")
+        raise typer.Exit(1)
+    except FileNotFoundError:
+        console.print("[red]X bash not found. Install Git Bash or WSL on Windows.[/red]")
+        raise typer.Exit(1)
     if result["passed"]:
         console.print(
             Panel(
-                f"[bold green]✓ PASSED![/bold green]\n\n{result['message']}\n\n"
-                "Great work! Clean up with: [bold]aicademy question clear[/bold]",
-                title="🎉  Solution Verified",
+                f"[bold green]OK PASSED![/bold green]\n\n{result['message']}\n\n"
+                "Great work!",
+                title="Solution Verified",
                 border_style="green",
             )
         )
+        
+        # Report result to API before prompting so it's saved immediately
+        if session_id:
+            try:
+                api.verify_session(session_id, result)
+            except api.APIError as e:
+                console.print(f"[yellow]⚠ Could not sync verification result to server: {e.response_data}[/yellow]")
+            
+        if typer.confirm("\nWould you like to clear the practice environment now?"):
+            from .question import clear
+            clear(question_id=question_id, verbose=False)
+        else:
+            console.print("\n[dim]You can clean it up later with: [bold]aicademy question clear[/bold][/dim]")
     else:
         console.print(
             Panel(
-                f"[bold red]✗ Not yet passing[/bold red]\n\n{result['message']}\n\n"
+                f"[bold red]X Not yet passing[/bold red]\n\n{result['message']}\n\n"
                 "Keep troubleshooting. Run [bold]aicademy question instructions[/bold] to review tasks.",
-                title="🔧  Verify Failed",
+                title="Verify Failed",
                 border_style="red",
             )
         )
 
-    # Report result to API
-    if session_id:
-        api.verify_session(session_id, result)
-        if result["passed"]:
-            config.set_active_session(None)
-
+    # If not passed, we still need to report the failed attempt
     if not result["passed"]:
+        if session_id:
+            try:
+                api.verify_session(session_id, result)
+            except api.APIError as e:
+                console.print(f"[dim yellow]⚠ Could not sync failed attempt to server: {e.response_data}[/dim yellow]")
         raise typer.Exit(1)

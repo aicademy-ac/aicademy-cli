@@ -59,6 +59,14 @@ def format_access_error(e: Exception) -> None:
     else:
         err = error_body or {}
 
+    if isinstance(err, dict) and "message" in err:
+        try:
+            inner_err = json.loads(err["message"])
+            if isinstance(inner_err, dict):
+                err = inner_err
+        except Exception:
+            pass
+
     code = err.get("code", "")
     message = err.get("message", str(error_body) if error_body else str(e))
 

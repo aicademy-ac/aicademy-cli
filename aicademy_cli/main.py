@@ -67,7 +67,7 @@ def _version_callback(value: bool) -> None:
             v = version("aicademy")
         except PackageNotFoundError:
             v = "dev"
-        console.print(f"[bold cyan]aicademy-cli[/bold cyan] version [white]{v}[/white]")
+        console.print(f"[bold cyan]aicademy[/bold cyan] version [white]{v}[/white]")
         raise typer.Exit()
 
 

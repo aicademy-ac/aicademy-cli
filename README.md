@@ -121,27 +121,14 @@ uv run ruff check .
 uv run mypy aicademy_cli/
 ```
 
-### Building the wheel
-
-```bash
-# Build wheel + sdist
-uv build
-
-# Output will be in dist/
-ls dist/
-# aicademy-0.1.0-py3-none-any.whl
-# aicademy-0.1.0.tar.gz
-```
-
 ### Publishing to PyPI
 
-```bash
-# Test on TestPyPI first
-uv publish --index testpypi
+Publishing is 100% automated via GitHub Actions (`ci.yml`) using Trusted Publishing.
 
-# Publish to production PyPI
-uv publish
-```
+To release a new version:
+1. Update the `version` in `pyproject.toml` (e.g., `version = "0.1.2"`).
+2. Commit and push the change to the `main` branch.
+3. The CI pipeline will automatically run tests, build the package, publish it to PyPI, and create a GitHub Release with the corresponding `vX.X.X` tag.
 
 ## Security
 
