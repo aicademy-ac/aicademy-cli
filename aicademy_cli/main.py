@@ -59,6 +59,12 @@ def verify(
     app_verify(question_id=question_id)
 
 
+@app.command("list")
+def list_questions() -> None:
+    """[bold]Shortcut:[/bold] aicademy list (same as aicademy question list)"""
+    question.list_questions()
+
+
 # Welcome banner when --help is shown
 def _version_callback(value: bool) -> None:
     if value:

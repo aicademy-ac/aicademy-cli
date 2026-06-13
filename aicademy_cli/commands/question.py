@@ -161,6 +161,11 @@ def start(
     kind.create_cluster(cluster_name, verbose=verbose)
 
     # Print success panel
+    md = Markdown(
+        "- **aicademy question instructions** — read full tasks\n"
+        "- **aicademy verify**                 — check your solution\n"
+        "- **aicademy question clear**         — clean up when done"
+    )
     console.print(
         Panel(
             f"[bold green]✓ Environment Ready![/bold green]\n\n"
@@ -169,14 +174,12 @@ def start(
             f"[bold]Category:[/bold]  {question.get('category', '').upper()}\n"
             f"[bold]Cluster:[/bold]   {cluster_name}\n"
             f"[bold]Time:[/bold]      ~{question.get('estimatedMinutes', '?')} minutes\n\n"
-            "[bold]Next steps:[/bold]\n"
-            "  [cyan]aicademy question instructions[/cyan]  — read full tasks\n"
-            "  [cyan]aicademy verify[/cyan]                 — check your solution\n"
-            "  [cyan]aicademy question clear[/cyan]         — clean up when done",
+            "[bold]Next steps:[/bold]",
             title="🚀  Session Started",
             border_style="green",
         )
     )
+    console.print(md)
 
 @app.command()
 def instructions(
@@ -193,7 +196,7 @@ def instructions(
         )
         raise typer.Exit(1)
 
-    qid = utils.normalize_question_id(question_id) or session.get("questionId")
+    qid = utils.normalize_question_id(question_id) or (session.get("questionId") if session else None)
 
     if web:
         cat = session.get("category", "") if session else ""
