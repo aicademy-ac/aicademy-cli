@@ -17,6 +17,15 @@ def run_checks(checks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     core_v1 = client.CoreV1Api()
     apps_v1 = client.AppsV1Api()
     networking_v1 = client.NetworkingV1Api()
+    rbac_v1 = client.RbacAuthorizationV1Api()
+    batch_v1 = client.BatchV1Api()
+    storage_v1 = client.StorageV1Api()
+    policy_v1 = client.PolicyV1Api()
+    
+    apis = {
+        "core": core_v1, "apps": apps_v1, "net": networking_v1,
+        "rbac": rbac_v1, "batch": batch_v1, "storage": storage_v1, "policy": policy_v1
+    }
     
     for check in checks:
         check_type = check.get("type")
@@ -26,7 +35,7 @@ def run_checks(checks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             check_name = check["description"]
         
         try:
-            passed, err = _run_single_check(core_v1, apps_v1, networking_v1, check)
+            passed, err = _run_single_check(apis, check)
             results.append({
                 "passed": passed,
                 "message": "" if passed else (err or fail_message),
@@ -44,65 +53,100 @@ def run_checks(checks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             
     return results
 
-def _run_single_check(core_v1: client.CoreV1Api, apps_v1: client.AppsV1Api, net_v1: client.NetworkingV1Api, check: Dict[str, Any]) -> Tuple[bool, str]:
+def _run_single_check(apis: Dict[str, Any], check: Dict[str, Any]) -> Tuple[bool, str]:
     check_type = check.get("type")
+    name = check.get("name")
+    namespace = check.get("namespace", "default")
     
-    # ─── CORE V1 ───
-    if check_type == "namespace_exists":
-        name = check.get("name")
-        if not name: return False, "Invalid check: missing 'name'"
-        core_v1.read_namespace(name=name)
+    if check_type == "mock_check":
         return True, ""
         
-    elif check_type == "pod_running":
-        name = check.get("name")
-        namespace = check.get("namespace", "default")
-        image = check.get("image")
-        if not name: return False, "Invalid check: missing 'name'"
-        pod = core_v1.read_namespaced_pod(name=name, namespace=namespace)
-        if pod.status.phase != "Running": return False, ""
-        if image:
-            has_image = any(container.image == image for container in pod.spec.containers)
-            if not has_image: return False, ""
-        return True, ""
-        
-    elif check_type == "service_exists":
-        name = check.get("name")
-        namespace = check.get("namespace", "default")
-        if not name: return False, "missing 'name'"
-        core_v1.read_namespaced_service(name=name, namespace=namespace)
-        return True, ""
+    if not name and check_type not in ["node_labeled"]:
+        return False, "missing 'name'"
 
-    elif check_type == "configmap_exists":
-        name = check.get("name")
-        namespace = check.get("namespace", "default")
-        if not name: return False, "missing 'name'"
-        core_v1.read_namespaced_config_map(name=name, namespace=namespace)
-        return True, ""
-
-    # ─── APPS V1 ───
-    elif check_type == "deployment_exists":
-        name = check.get("name")
-        namespace = check.get("namespace", "default")
-        replicas = check.get("replicas")
-        if not name: return False, "missing 'name'"
-        dep = apps_v1.read_namespaced_deployment(name=name, namespace=namespace)
-        if replicas is not None:
-            if dep.spec.replicas != replicas:
+    try:
+        # CORE V1
+        if check_type == "namespace_exists":
+            apis["core"].read_namespace(name=name)
+        elif check_type == "pod_running":
+            pod = apis["core"].read_namespaced_pod(name=name, namespace=namespace)
+            if pod.status.phase != "Running": return False, f"Pod is {pod.status.phase}"
+            image = check.get("image")
+            if image and not any(c.image == image for c in pod.spec.containers):
+                return False, f"Image {image} not found in pod"
+        elif check_type == "service_exists":
+            apis["core"].read_namespaced_service(name=name, namespace=namespace)
+        elif check_type == "configmap_exists":
+            apis["core"].read_namespaced_config_map(name=name, namespace=namespace)
+        elif check_type == "secret_exists":
+            apis["core"].read_namespaced_secret(name=name, namespace=namespace)
+        elif check_type == "pvc_exists":
+            apis["core"].read_namespaced_persistent_volume_claim(name=name, namespace=namespace)
+        elif check_type == "pv_exists":
+            apis["core"].read_persistent_volume(name=name)
+        elif check_type == "serviceaccount_exists":
+            apis["core"].read_namespaced_service_account(name=name, namespace=namespace)
+        elif check_type == "node_labeled":
+            nodes = apis["core"].list_node().items
+            label_key = check.get("label_key")
+            label_value = check.get("label_value")
+            found = any(n.metadata.labels.get(label_key) == label_value for n in nodes)
+            if not found: return False, f"No node with label {label_key}={label_value}"
+            
+        # APPS V1
+        elif check_type == "deployment_exists":
+            dep = apis["apps"].read_namespaced_deployment(name=name, namespace=namespace)
+            replicas = check.get("replicas")
+            if replicas is not None and dep.spec.replicas != replicas:
                 return False, f"Expected {replicas} replicas, found {dep.spec.replicas}"
-        return True, ""
+        elif check_type == "daemonset_exists":
+            apis["apps"].read_namespaced_daemon_set(name=name, namespace=namespace)
+        elif check_type == "statefulset_exists":
+            apis["apps"].read_namespaced_stateful_set(name=name, namespace=namespace)
 
-    elif check_type == "daemonset_exists":
-        name = check.get("name")
-        namespace = check.get("namespace", "default")
-        if not name: return False, "missing 'name'"
-        apps_v1.read_namespaced_daemon_set(name=name, namespace=namespace)
-        return True, ""
+        # NETWORKING V1
+        elif check_type == "networkpolicy_exists":
+            apis["net"].read_namespaced_network_policy(name=name, namespace=namespace)
+        elif check_type == "ingress_exists":
+            apis["net"].read_namespaced_ingress(name=name, namespace=namespace)
 
-    # ─── FALLBACK ───
-    elif check_type == "mock_check":
-        # Always returns true for mock questions
-        return True, ""
+        # RBAC V1
+        elif check_type == "role_exists":
+            apis["rbac"].read_namespaced_role(name=name, namespace=namespace)
+        elif check_type == "rolebinding_exists":
+            apis["rbac"].read_namespaced_role_binding(name=name, namespace=namespace)
+        elif check_type == "clusterrole_exists":
+            apis["rbac"].read_cluster_role(name=name)
+        elif check_type == "clusterrolebinding_exists":
+            apis["rbac"].read_cluster_role_binding(name=name)
 
-    else:
-        return False, f"Unknown check type: {check_type}"
+        # BATCH V1
+        elif check_type == "job_exists":
+            apis["batch"].read_namespaced_job(name=name, namespace=namespace)
+        elif check_type == "cronjob_exists":
+            apis["batch"].read_namespaced_cron_job(name=name, namespace=namespace)
+
+        # STORAGE V1
+        elif check_type == "storageclass_exists":
+            apis["storage"].read_storage_class(name=name)
+
+        # POLICY V1
+        elif check_type == "pdb_exists":
+            apis["policy"].read_namespaced_pod_disruption_budget(name=name, namespace=namespace)
+
+        # BASH CHECK (Fallback for complex logical tests)
+        elif check_type == "bash_check":
+            command = check.get("command")
+            if not command: return False, "Missing bash command"
+            import subprocess
+            res = subprocess.run(command, shell=True, capture_output=True, text=True)
+            if res.returncode != 0:
+                return False, f"Command failed: {res.stderr}"
+        else:
+            return False, f"Unknown check type: {check_type}"
+            
+        return True, ""
+    except ApiException as e:
+        if e.status == 404:
+            return False, "Resource not found"
+        raise e

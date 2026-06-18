@@ -158,7 +158,24 @@ def start(
     )
 
     # Create KIND cluster
-    kind.create_cluster(cluster_name, verbose=verbose)
+    kind.create_cluster(
+        cluster_name, 
+        config_content=data.get("kindConfigContent"), 
+        verbose=verbose
+    )
+
+    # Run setup commands if any
+    setup_commands = data.get("setupCommands", [])
+    if setup_commands:
+        console.print("\n[bold cyan]Running setup commands...[/bold cyan]")
+        import subprocess
+        for cmd in setup_commands:
+            console.print(f"[dim]Running: {cmd}[/dim]")
+            try:
+                subprocess.run(cmd, shell=True, check=True)
+            except subprocess.CalledProcessError as e:
+                console.print(f"[red]✗ Setup command failed: {e}[/red]")
+                console.print("[dim yellow]Proceeding anyway, but the environment may not be correctly prepared.[/dim yellow]")
 
     # Print success panel
     md = Markdown(

@@ -2,19 +2,31 @@ import subprocess
 import typer
 from rich.console import Console
 from pathlib import Path
+import os
 from .. import config
 
 console = Console()
+
+import tempfile
 
 def get_log_path() -> Path:
     config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     return config.CONFIG_DIR / "kind.log"
 
-def create_cluster(cluster_name: str, verbose: bool = False) -> None:
+def create_cluster(cluster_name: str, config_content: str = None, verbose: bool = False) -> None:
     console.print(f"\n[bold]Creating KIND cluster:[/bold] [cyan]{cluster_name}[/cyan]")
     console.print("[dim]This may take 30–90 seconds...[/dim]\n")
 
     kind_cmd = ["kind", "create", "cluster", "--name", cluster_name]
+    
+    # Write the config string to a temp file if provided
+    temp_config_path = None
+    if config_content:
+        fd, temp_config_path = tempfile.mkstemp(suffix=".yaml")
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(config_content)
+        kind_cmd.extend(["--config", temp_config_path])
+
     log_file = get_log_path()
     try:
         if verbose:
@@ -28,6 +40,9 @@ def create_cluster(cluster_name: str, verbose: bool = False) -> None:
         if not verbose:
             console.print(f"[dim]Check logs for details: {log_file}[/dim]")
         raise typer.Exit(1)
+    finally:
+        if temp_config_path and os.path.exists(temp_config_path):
+            os.remove(temp_config_path)
 
 def delete_cluster(cluster_name: str, verbose: bool = False) -> None:
     console.print(f"[bold]Deleting cluster:[/bold] [cyan]{cluster_name}[/cyan]")
