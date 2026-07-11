@@ -154,6 +154,7 @@ def start(
             "questionId": question_id,
             "clusterName": cluster_name,
             "category": question.get("category", ""),
+            "verificationToken": session.get("verificationToken"),
         }
     )
 

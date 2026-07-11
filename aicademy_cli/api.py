@@ -105,11 +105,19 @@ def abandon_session(session_id: str) -> None:
     except httpx.HTTPStatusError as exc:
         raise APIError(f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}", exc.response.status_code, exc.response.text)
 
-def verify_session(session_id: str, result: dict) -> None:
+def verify_session(session_id: str, verification_token: str, check_results: list[dict] | None, result: dict) -> None:
     try:
+        payload: dict[str, object] = {
+            "passed": result.get("passed"),
+            "message": result.get("message", ""),
+            "score": result.get("score"),
+            "verificationToken": verification_token,
+        }
+        if check_results is not None:
+            payload["checkResults"] = check_results
         resp = httpx.post(
             f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
-            json=result,
+            json=payload,
             headers=_get_headers(),
             timeout=10,
         )

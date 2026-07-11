@@ -1,6 +1,6 @@
 [project]
 name = "aicademy"
-version = "0.2.2"
+version = "0.2.3"
 description = "Aicademy Practice CLI — solve Kubernetes exam scenarios locally with KIND"
 readme = "README.md"
 requires-python = ">=3.9"

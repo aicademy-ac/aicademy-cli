@@ -111,7 +111,7 @@ fi
         # Report result to API before prompting so it's saved immediately
         if session_id:
             try:
-                api.verify_session(session_id, result)
+                api.verify_session(session_id, session.get("verificationToken", ""), check_results if 'check_results' in locals() else None, result)
             except api.APIError as e:
                 console.print(f"[yellow]⚠ Could not sync verification result to server: {e.response_data}[/yellow]")
             
@@ -134,7 +134,7 @@ fi
     if not result["passed"]:
         if session_id:
             try:
-                api.verify_session(session_id, result)
+                api.verify_session(session_id, session.get("verificationToken", ""), check_results if 'check_results' in locals() else None, result)
             except api.APIError as e:
                 console.print(f"[dim yellow]⚠ Could not sync failed attempt to server: {e.response_data}[/dim yellow]")
         raise typer.Exit(1)
