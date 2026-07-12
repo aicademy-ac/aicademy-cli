@@ -20,58 +20,34 @@ console = Console()
 
 _USER_CODE_ALPHABET = string.ascii_uppercase + string.digits
 _POLL_INTERVAL_SECONDS = 5
-_MAX_POLL_ATTEMPTS = 120  # 5s * 120 = 10 minutes
+_MAX_POLL_ATTEMPTS = 24  # 5s * 24 = 2 minutes
 
 
 def _generate_user_code(length: int = 8) -> str:
-    """Generate a human-friendly user code."""
     return "".join(secrets.choice(_USER_CODE_ALPHABET) for _ in range(length))
 
 
 def _generate_device_code() -> str:
-    """Generate a device code used for polling."""
     return str(uuid.uuid4())
 
 
-def _format_poll_error(e: api.APIError, verbose: bool) -> str:
-    """Build a diagnostic error line for a failed poll attempt."""
-    detail = e.response_data or (e.args[0] if e.args else "unknown")
-    if verbose:
-        return f"Poll failed (HTTP {e.status_code}): {detail}"
-    if e.status_code == 404:
-        return "Waiting for browser to create the device code..."
-    if e.status_code == 500:
-        return "Server error. Run npm run db:push in www.aicademy.ac"
-    return f"Poll failed (HTTP {e.status_code})"
-
-
-async def _check_server_reachable(verbose: bool) -> bool:
-    """Pre-flight: verify the API server is up before starting the flow."""
+async def _check_server_reachable() -> bool:
     base = config.API_BASE_URL
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"{base}/api/health")
-            if resp.status_code < 400:
-                if verbose:
-                    console.print("[green]OK Server is reachable.[/green]")
-                return True
-            console.print(
-                f"[red]Server returned HTTP {resp.status_code} on /api/health.[/red]"
-            )
-            return False
-    except httpx.RequestError as exc:
+            return resp.status_code < 400
+    except httpx.RequestError:
         console.print(
             f"[red]Cannot connect to {base}.[/red]\n"
-            f"[dim]Error: {exc}[/dim]\n"
-            "[dim]Make sure the dev server is running:[/dim] "
-            "[bold]cd ../www.aicademy.ac && npm run dev[/bold]"
+            "[dim]Make sure the server is running.[/dim]"
         )
         return False
 
 
 async def start_device_login(verbose: bool = False) -> None:
     """Device-code login flow: open browser, poll for authorization, store token."""
-    if not await _check_server_reachable(verbose):
+    if not await _check_server_reachable():
         raise typer.Exit(1)
 
     device_code = _generate_device_code()
@@ -81,7 +57,7 @@ async def start_device_login(verbose: bool = False) -> None:
     console.print(
         Panel(
             "[bold]Aicademy Login[/bold]\n\n"
-            "To authenticate, open the URL below and confirm the code.\n"
+            "Open the URL below in your browser to authenticate.\n"
             f"[bold]User code:[/bold] [cyan]{user_code}[/cyan]",
             title="Device Authentication",
             border_style="cyan",
@@ -90,9 +66,10 @@ async def start_device_login(verbose: bool = False) -> None:
     console.print(f"\n  [dim]URL:[/dim] [cyan]{url}[/cyan]\n")
     webbrowser.open(url)
 
-    console.print("[dim]Waiting for authorization in the browser...[/dim]\n")
+    console.print("[dim]Waiting for browser authorization...[/dim]\n")
     approved = False
     consecutive_404 = 0
+
     for attempt in range(1, _MAX_POLL_ATTEMPTS + 1):
         try:
             status_data = await api.get_device_status(device_code)
@@ -100,16 +77,15 @@ async def start_device_login(verbose: bool = False) -> None:
         except api.APIError as e:
             if e.status_code == 404:
                 consecutive_404 += 1
-                console.print(f"[dim yellow]{_format_poll_error(e, verbose)}[/dim yellow]")
-                if consecutive_404 >= 3:
+                if consecutive_404 == 3:
                     console.print(
-                        "[dim yellow]  /api/cli-code not found after 3 attempts.[/dim yellow]"
+                        "[yellow]Device-code endpoint not available.[/yellow]\n"
+                        "[dim]Your browser may show a token instead.[/dim]\n"
+                        "[dim]If so, copy it and run:[/dim] "
+                        "[bold]aicademy login --token <paste-token>[/bold]"
                     )
-                    console.print(
-                        "[bold yellow]  Restart: cd ../www.aicademy.ac && npm run dev[/bold yellow]"
-                    )
-            else:
-                console.print(f"[dim yellow]{_format_poll_error(e, verbose)}[/dim yellow]")
+            elif verbose:
+                console.print(f"[dim yellow]Poll error: {e}[/dim yellow]")
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
             continue
 
@@ -125,7 +101,11 @@ async def start_device_login(verbose: bool = False) -> None:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
     if not approved:
-        console.print("[red]Device login timed out. Please try again.[/red]")
+        console.print(
+            "[red]Login timed out.[/red]\n"
+            "[dim]If your browser showed a token, copy it and run:[/dim]\n"
+            "[bold]  aicademy login --token <paste-token>[/bold]"
+        )
         raise typer.Exit(1)
 
     console.print("[dim]Authorization received. Exchanging device code...[/dim]")
@@ -166,8 +146,7 @@ async def _store_token_after_verify(token: str) -> None:
     console.print(
         Panel(
             "[bold green]Logged in successfully![/bold green]\n\n"
-            "Your token is stored in [dim]~/.aicademy/config.json[/dim]\n"
-            "It expires in [bold]7 days[/bold]. Run [bold]aicademy login[/bold] to renew.",
+            "Your token is stored in [dim]~/.aicademy/config.json[/dim]",
             title="Success",
             border_style="green",
         )
