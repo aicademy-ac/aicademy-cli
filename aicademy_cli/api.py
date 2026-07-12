@@ -1,14 +1,28 @@
-"""API Client for Aicademy CLI"""
+"""Async API Client for Aicademy CLI"""
+
+from __future__ import annotations
+
+from typing import Any
 
 import httpx
-from typing import Any
+
 from . import config
 
+_CLIENT_TIMEOUT = 10
+_client: httpx.AsyncClient = httpx.AsyncClient(timeout=_CLIENT_TIMEOUT)
+
+
 class APIError(Exception):
-    def __init__(self, message: str, status_code: int, response_data: dict | str = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int,
+        response_data: dict[str, Any] | str | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.response_data = response_data
+
 
 def _get_headers(token: str | None = None) -> dict[str, str]:
     t = token or config.get_token()
@@ -16,20 +30,25 @@ def _get_headers(token: str | None = None) -> dict[str, str]:
         return {"Authorization": f"Bearer {t}"}
     return {}
 
-def _request(method: str, url: str, **kwargs) -> dict:
+
+async def _request(method: str, url: str, **kwargs: Any) -> Any:
     try:
-        resp = httpx.request(method, url, **kwargs)
+        resp = await _client.request(method, url, **kwargs)
     except httpx.RequestError as exc:
-        raise APIError(f"Network error: {exc}", 0, str(exc))
-    
+        raise APIError(f"Network error: {exc}", 0, str(exc)) from exc
+
     if resp.status_code >= 400:
-        data = resp.text
+        data: Any = resp.text
         try:
             data = resp.json()
         except Exception:
             pass
-        raise APIError(f"HTTP {resp.status_code}: {resp.reason_phrase}", resp.status_code, data)
-    
+        raise APIError(
+            f"HTTP {resp.status_code}: {resp.reason_phrase}",
+            resp.status_code,
+            data,
+        )
+
     if resp.status_code == 204:
         return None
     try:
@@ -37,38 +56,71 @@ def _request(method: str, url: str, **kwargs) -> dict:
     except Exception:
         return resp.text
 
+
 # ─── Auth ───────────────────────────────────────────────────────────────────────
 
-def verify_token(token: str) -> dict:
-    return _request(
+
+async def verify_token(token: str) -> dict[str, Any]:
+    return await _request(
         "GET",
         f"{config.API_BASE_URL}/api/cli-token",
         headers=_get_headers(token),
         timeout=10,
     )
 
-def logout(token: str) -> None:
-    try:
-        httpx.delete(
-            f"{config.API_BASE_URL}/api/cli-token",
-            headers=_get_headers(token),
-            timeout=5,
-        )
-    except httpx.RequestError as exc:
-        raise APIError(f"Network error: {exc}", 0, str(exc))
 
-def get_sessions() -> dict:
-    return _request(
+async def get_me() -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"{config.API_BASE_URL}/api/me",
+        headers=_get_headers(),
+        timeout=10,
+    )
+
+
+async def logout(token: str) -> None:
+    await _request(
+        "DELETE",
+        f"{config.API_BASE_URL}/api/cli-token",
+        headers=_get_headers(token),
+        timeout=5,
+    )
+
+
+async def get_device_status(device_code: str) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"{config.API_BASE_URL}/api/cli-code",
+        params={"device_code": device_code},
+        headers={"Accept": "application/json"},
+        timeout=10,
+    )
+
+
+async def exchange_device_code(device_code: str) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        f"{config.API_BASE_URL}/api/cli-code",
+        json={"device_code": device_code},
+        headers={"Accept": "application/json"},
+        timeout=10,
+    )
+
+
+# ─── Practice ───────────────────────────────────────────────────────────────────
+
+
+async def get_sessions() -> dict[str, Any]:
+    return await _request(
         "GET",
         f"{config.API_BASE_URL}/api/practice/sessions",
         headers=_get_headers(),
         timeout=10,
     )
 
-# ─── Practice ───────────────────────────────────────────────────────────────────
 
-def start_session(question_id: str, cluster_name: str) -> dict:
-    return _request(
+async def start_session(question_id: str, cluster_name: str) -> dict[str, Any]:
+    return await _request(
         "POST",
         f"{config.API_BASE_URL}/api/practice/sessions",
         json={"questionId": question_id, "clusterName": cluster_name},
@@ -76,55 +128,55 @@ def start_session(question_id: str, cluster_name: str) -> dict:
         timeout=15,
     )
 
-def get_question(category: str, question_id: str) -> dict:
-    return _request(
+
+async def get_question(category: str, question_id: str) -> dict[str, Any]:
+    return await _request(
         "GET",
         f"{config.API_BASE_URL}/api/practice/questions/{category}/{question_id}",
         headers=_get_headers(),
         timeout=10,
     )
 
-def get_all_questions() -> dict:
-    return _request(
+
+async def get_all_questions() -> dict[str, Any]:
+    return await _request(
         "GET",
         f"{config.API_BASE_URL}/api/practice/questions",
         headers=_get_headers(),
         timeout=10,
     )
 
-def abandon_session(session_id: str) -> None:
-    try:
-        resp = httpx.patch(
-            f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
-            headers=_get_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-    except httpx.RequestError as exc:
-        raise APIError(f"Network error: {exc}", 0, str(exc))
-    except httpx.HTTPStatusError as exc:
-        raise APIError(f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}", exc.response.status_code, exc.response.text)
 
-def verify_session(session_id: str, verification_token: str, check_results: list[dict] | None, result: dict) -> None:
-    try:
-        payload: dict[str, object] = {
-            "passed": result.get("passed"),
-            "message": result.get("message", ""),
-            "verificationToken": verification_token,
-        }
-        score = result.get("score")
-        if score is not None:
-            payload["score"] = score
-        if check_results is not None:
-            payload["checkResults"] = check_results
-        resp = httpx.post(
-            f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
-            json=payload,
-            headers=_get_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-    except httpx.RequestError as exc:
-        raise APIError(f"Network error: {exc}", 0, str(exc))
-    except httpx.HTTPStatusError as exc:
-        raise APIError(f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}", exc.response.status_code, exc.response.text)
+async def abandon_session(session_id: str) -> None:
+    await _request(
+        "PATCH",
+        f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
+        headers=_get_headers(),
+        timeout=10,
+    )
+
+
+async def verify_session(
+    session_id: str,
+    verification_token: str,
+    check_results: list[dict[str, Any]] | None,
+    result: dict[str, Any],
+) -> None:
+    payload: dict[str, Any] = {
+        "passed": result.get("passed"),
+        "message": result.get("message", ""),
+        "verificationToken": verification_token,
+    }
+    score = result.get("score")
+    if score is not None:
+        payload["score"] = score
+    if check_results is not None:
+        payload["checkResults"] = check_results
+
+    await _request(
+        "POST",
+        f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
+        json=payload,
+        headers=_get_headers(),
+        timeout=10,
+    )

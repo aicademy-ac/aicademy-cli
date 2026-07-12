@@ -1,30 +1,33 @@
 """Tool installation command — installs kubectl, kind, docker via native package managers"""
 
-import sys
+from __future__ import annotations
+
 import platform
-import subprocess
 import shutil
+import subprocess
+from collections.abc import Iterable
+
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
 console = Console()
-app = typer.Typer(help="Install required tools (kubectl, kind, docker)")
+app = typer.Typer(help="Install and check required tools (kubectl, kind, docker)")
 
 # ─── Tool definitions ───────────────────────────────────────────────────────────
-TOOLS: dict[str, dict] = {
+TOOLS: dict[str, dict[str, str]] = {
     "kubectl": {
         "check": "kubectl version --client --output=yaml 2>/dev/null",
         "windows": "winget install Kubernetes.kubectl",
         "darwin": "brew install kubectl",
-        "linux": "curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/",
+        "linux": "curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/",  # noqa: E501
     },
     "kind": {
         "check": "kind version",
         "windows": "winget install Kubernetes.kind",
         "darwin": "brew install kind",
-        "linux": "curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64 && chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind",
+        "linux": "curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64 && chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind",  # noqa: E501
     },
     "docker": {
         "check": "docker --version",
@@ -43,8 +46,7 @@ def detect_os() -> str:
         return "windows"
     elif system == "darwin":
         return "darwin"
-    else:
-        return "linux"
+    return "linux"
 
 
 def is_installed(tool: str) -> bool:
@@ -52,7 +54,7 @@ def is_installed(tool: str) -> bool:
     return shutil.which(binary) is not None
 
 
-def install_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
+def _install_one_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
     if tool_name not in TOOLS:
         console.print(f"[red]Unknown tool: {tool_name}[/red]")
         return False
@@ -75,83 +77,132 @@ def install_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
     console.print(f"[dim]$ {install_cmd}[/dim]\n")
 
     try:
-        result = subprocess.run(
+        subprocess.run(
             install_cmd,
             shell=True,
             check=True,
             text=True,
         )
         console.print(f"[green]✔ {tool_name} installed successfully.[/green]")
-        return result.returncode == 0
+        return True
     except subprocess.CalledProcessError as exc:
         console.print(f"[red]✗ Failed to install {tool_name}: {exc}[/red]")
         return False
 
 
-@app.command("install-tool")
-def install(
-    tool: str = typer.Argument(
-        ...,
-        help="Tool to install: kubectl | kind | docker | all",
+def _install_tools(tools_to_process: Iterable[str], dry_run: bool = False) -> bool:
+    os_type = detect_os()
+    success_all = True
+    for t in tools_to_process:
+        success = _install_one_tool(t, os_type, dry_run)
+        if not success:
+            success_all = False
+    return success_all
+
+
+def _check_tools(tools_to_process: Iterable[str]) -> None:
+    os_type = detect_os()
+    table = Table(title="🔍 Tool Status", border_style="dim")
+    table.add_column("Tool", style="bold")
+    table.add_column("Status")
+    table.add_column("Install Command")
+    for t in tools_to_process:
+        installed = is_installed(t)
+        status = "[green]✔ Installed[/green]" if installed else "[red]✗ Missing[/red]"
+        cmd = TOOLS[t].get(os_type, "N/A")
+        table.add_row(t, status, f"[dim]{cmd}[/dim]")
+    console.print(table)
+
+
+@app.callback(invoke_without_command=True)
+def tools(
+    ctx: typer.Context,
+    install: bool = typer.Option(False, "--install", help="Install all required tools"),
+    check: bool = typer.Option(False, "--check", help="Check if required tools are installed"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print install commands without executing"
     ),
-    check: bool = typer.Option(False, "--check", help="Check if tools are installed (no install)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print install commands without executing"),
+    tool: str | None = typer.Argument(
+        None,
+        help="[Deprecated] Install a single tool: kubectl | kind | docker | all",
+    ),
 ) -> None:
     """
-    Install required CLI tools automatically using the system package manager.
+    Install and check required CLI tools.
 
-    Auto-detects: winget (Windows), brew (macOS), or shell scripts (Linux).
+    Defaults to --check when no flags are provided.
 
     Examples:
-      aicademy install-tool kubectl
-      aicademy install-tool all
-      aicademy install-tool kind --check
+      aicademy tools --check
+      aicademy tools --install
     """
-    os_type = detect_os()
-    tools_to_process = ALL_TOOLS if tool.lower() == "all" else [tool.lower()]
+    if ctx.invoked_subcommand is not None:
+        return
 
+    if tool:
+        console.print(
+            "[yellow]⚠ Positional tool argument is deprecated. "
+            "Use [bold]aicademy tools --install[/bold] instead.[/yellow]"
+        )
+        tools_to_process = ALL_TOOLS if tool.lower() == "all" else [tool.lower()]
+        for t in tools_to_process:
+            if t not in TOOLS:
+                console.print(f"[red]Unknown tool: {t}.[/red]")
+                raise typer.Exit(1)
+        success = _install_tools(tools_to_process, dry_run=dry_run)
+        if not success:
+            raise typer.Exit(1)
+        return
+
+    if install:
+        os_type = detect_os()
+        pkg_mgr = (
+            "winget" if os_type == "windows" else "brew" if os_type == "darwin" else "shell script"
+        )
+        console.print(
+            Panel(
+                f"[bold]OS detected:[/bold] {os_type}\n"
+                f"[bold]Package manager:[/bold] {pkg_mgr}\n"
+                f"[bold]Tools:[/bold] {', '.join(ALL_TOOLS)}",
+                title="🛠  Tool Installation",
+                border_style="cyan",
+            )
+        )
+        success = _install_tools(ALL_TOOLS, dry_run=dry_run)
+        if success:
+            console.print(
+                Panel(
+                    "[bold green]All tools ready![/bold green]\n\nYou can now run:\n"
+                    "[bold]aicademy start <question-id>[/bold]",
+                    border_style="green",
+                )
+            )
+        else:
+            console.print("[yellow]Some tools failed to install. Check the errors above.[/yellow]")
+            raise typer.Exit(1)
+    else:
+        # Default to check
+        _check_tools(ALL_TOOLS)
+
+
+# Backwards-compatible helper used by legacy commands
+
+
+def install_legacy_tool(
+    tool: str,
+    check: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """Run the legacy install-tool logic."""
+    tools_to_process = ALL_TOOLS if tool.lower() == "all" else [tool.lower()]
     for t in tools_to_process:
         if t not in TOOLS:
-            console.print(f"[red]Unknown tool: {t}. Choose from: {', '.join(ALL_TOOLS)}, all[/red]")
+            console.print(f"[red]Unknown tool: {t}.[/red]")
             raise typer.Exit(1)
 
     if check:
-        table = Table(title="🔍 Tool Status", border_style="dim")
-        table.add_column("Tool", style="bold")
-        table.add_column("Status")
-        table.add_column("Install Command")
-        for t in tools_to_process:
-            installed = is_installed(t)
-            status = "[green]✔ Installed[/green]" if installed else "[red]✗ Missing[/red]"
-            cmd = TOOLS[t].get(os_type, "N/A")
-            table.add_row(t, status, f"[dim]{cmd}[/dim]")
-        console.print(table)
-        raise typer.Exit()
-
-    console.print(
-        Panel(
-            f"[bold]OS detected:[/bold] {os_type}\n"
-            f"[bold]Package manager:[/bold] {'winget' if os_type == 'windows' else 'brew' if os_type == 'darwin' else 'shell script'}\n"
-            f"[bold]Tools:[/bold] {', '.join(tools_to_process)}",
-            title="🛠  Tool Installation",
-            border_style="cyan",
-        )
-    )
-
-    success_all = True
-    for t in tools_to_process:
-        success = install_tool(t, os_type, dry_run)
-        if not success:
-            success_all = False
-
-    if success_all:
-        console.print(
-            Panel(
-                "[bold green]All tools ready![/bold green]\n\nYou can now run:\n"
-                "[bold]aicademy question start <question-id>[/bold]",
-                border_style="green",
-            )
-        )
+        _check_tools(tools_to_process)
     else:
-        console.print("[yellow]Some tools failed to install. Check the errors above.[/yellow]")
-        raise typer.Exit(1)
+        success = _install_tools(tools_to_process, dry_run=dry_run)
+        if not success:
+            raise typer.Exit(1)

@@ -1,31 +1,54 @@
-import shutil
+from __future__ import annotations
+
 import json
+import re
+import shutil
+
 import typer
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
+
 from .. import config
 
 console = Console()
 
+_QID_RE = re.compile(
+    r"^(?P<prefix>cka|ckad|a|c|d)-?(?P<num>\d+)$",
+    re.IGNORECASE,
+)
+
+
 def require_auth() -> str:
     token = config.get_token()
     if not token:
-        console.print(
-            "[red]✗ Not logged in.[/red] Run [bold]aicademy login[/bold] first."
-        )
+        console.print("[red]✗ Not logged in.[/red] Run [bold]aicademy login[/bold] first.")
         raise typer.Exit(1)
     return token
 
+
 def normalize_question_id(qid: str | None) -> str | None:
-    """Zero-pad single-digit question IDs (e.g. cka-1 -> cka-01)"""
+    """
+    Normalize question IDs to the canonical form.
+
+    Supported aliases:
+      cka-1, cka-01, cka01, cka1, a1, a-1   -> cka-01
+      cka-12, cka12, a12                     -> cka-12
+      ckad-3, ckad-03, ckad03, c3, d3        -> ckad-03
+    """
     if not qid:
         return qid
-    parts = qid.split("-")
-    if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 1:
-        return f"{parts[0]}-0{parts[1]}"
-    return qid
+
+    m = _QID_RE.match(qid.strip())
+    if not m:
+        return qid
+
+    prefix = m.group("prefix").lower()
+    num = int(m.group("num"))
+    canonical_prefix = {"a": "cka", "c": "ckad", "d": "ckad"}.get(prefix, prefix)
+    return f"{canonical_prefix}-{num:02d}"
+
 
 def check_prerequisites() -> bool:
     """Check that docker, kind, and kubectl are installed."""
@@ -39,17 +62,17 @@ def check_prerequisites() -> bool:
         table.add_column("Tool", style="bold")
         table.add_column("Install Command")
         for t in missing:
-            table.add_row(t, f"aicademy install-tool {t}")
+            table.add_row(t, "aicademy tools --install")
         console.print(table)
-        console.print(
-            f"\n[yellow]Run the install commands above, then retry.[/yellow]"
-        )
+        console.print("\n[yellow]Run the install commands above, then retry.[/yellow]")
         return False
     return True
+
 
 def format_access_error(e: Exception) -> None:
     """Parse and display a structured API error (upgrade required, session conflict, etc.)"""
     from ..api import APIError
+
     error_body = e.response_data if isinstance(e, APIError) else str(e)
     if isinstance(error_body, str):
         try:

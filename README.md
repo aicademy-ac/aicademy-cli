@@ -78,7 +78,7 @@ aicademy question clear
 ## OS Support
 
 | OS      | Package Manager        |
-| ---------| ------------------------|
+| ------- | ---------------------- |
 | Windows | winget                 |
 | macOS   | Homebrew               |
 | Linux   | Official shell scripts |
@@ -86,7 +86,7 @@ aicademy question clear
 ## Categories
 
 | Exam                                       | Slug   | Questions | Free |
-| --------------------------------------------| --------| -----------| ------|
+| ------------------------------------------ | ------ | --------- | ---- |
 | Certified Kubernetes Administrator         | `cka`  | 20        | 10   |
 | Certified Kubernetes Application Developer | `ckad` | 20        | 10   |
 | Certified Kubernetes Security Specialist   | `cks`  | 20        | 10   |
@@ -126,6 +126,7 @@ uv run mypy aicademy_cli/
 Publishing is 100% automated via GitHub Actions (`ci.yml`) using Trusted Publishing.
 
 To release a new version:
+
 1. Update the `version` in `pyproject.toml` (e.g., `version = "0.1.2"`).
 2. Commit and push the change to the `main` branch.
 3. The CI pipeline will automatically run tests, build the package, publish it to PyPI, and create a GitHub Release with the corresponding `vX.X.X` tag.

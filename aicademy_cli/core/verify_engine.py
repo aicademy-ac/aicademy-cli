@@ -1,9 +1,12 @@
-import time
-from typing import List, Dict, Any, Tuple
+from __future__ import annotations
+
+from typing import Any
+
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-def run_checks(checks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+def run_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Run a list of declarative checks against the local Kubernetes cluster.
     Returns a list of results: [{"passed": bool, "message": str, "name": str}, ...]
@@ -12,7 +15,13 @@ def run_checks(checks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     try:
         config.load_kube_config()
     except Exception as e:
-        return [{"passed": False, "message": f"Failed to load kubeconfig: {e}", "name": "Cluster Connection"}]
+        return [
+            {
+                "passed": False,
+                "message": f"Failed to load kubeconfig: {e}",
+                "name": "Cluster Connection",
+            }
+        ]
 
     core_v1 = client.CoreV1Api()
     apps_v1 = client.AppsV1Api()
@@ -21,46 +30,66 @@ def run_checks(checks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     batch_v1 = client.BatchV1Api()
     storage_v1 = client.StorageV1Api()
     policy_v1 = client.PolicyV1Api()
-    
+
     apis = {
-        "core": core_v1, "apps": apps_v1, "net": networking_v1,
-        "rbac": rbac_v1, "batch": batch_v1, "storage": storage_v1, "policy": policy_v1
+        "core": core_v1,
+        "apps": apps_v1,
+        "net": networking_v1,
+        "rbac": rbac_v1,
+        "batch": batch_v1,
+        "storage": storage_v1,
+        "policy": policy_v1,
     }
-    
+
     for check in checks:
         check_type = check.get("type")
         fail_message = check.get("failMessage", f"Check {check_type} failed.")
         check_name = check.get("name", check_type)
         if "description" in check:
             check_name = check["description"]
-        
+
         try:
             passed, err = _run_single_check(apis, check)
-            results.append({
-                "passed": passed,
-                "message": "" if passed else (err or fail_message),
-                "name": check_name
-            })
+            results.append(
+                {
+                    "passed": passed,
+                    "message": "" if passed else (err or fail_message),
+                    "name": check_name,
+                }
+            )
         except ApiException as e:
             # If it's a 404, it means the resource doesn't exist, which usually means failure.
             if e.status == 404:
                 results.append({"passed": False, "message": fail_message, "name": check_name})
             else:
                 # For 401 or 500, it's an unexpected API error
-                results.append({"passed": False, "message": f"Unexpected API Error: {e.reason}", "name": check_name})
+                results.append(
+                    {
+                        "passed": False,
+                        "message": f"Unexpected API Error: {e.reason}",
+                        "name": check_name,
+                    }
+                )
         except Exception as e:
-            results.append({"passed": False, "message": f"Internal Verification Error: {str(e)}", "name": check_name})
-            
+            results.append(
+                {
+                    "passed": False,
+                    "message": f"Internal Verification Error: {str(e)}",
+                    "name": check_name,
+                }
+            )
+
     return results
 
-def _run_single_check(apis: Dict[str, Any], check: Dict[str, Any]) -> Tuple[bool, str]:
+
+def _run_single_check(apis: dict[str, Any], check: dict[str, Any]) -> tuple[bool, str]:
     check_type = check.get("type")
     name = check.get("name")
     namespace = check.get("namespace", "default")
-    
+
     if check_type == "mock_check":
         return True, ""
-        
+
     if not name and check_type not in ["node_labeled"]:
         return False, "missing 'name'"
 
@@ -70,7 +99,8 @@ def _run_single_check(apis: Dict[str, Any], check: Dict[str, Any]) -> Tuple[bool
             apis["core"].read_namespace(name=name)
         elif check_type == "pod_running":
             pod = apis["core"].read_namespaced_pod(name=name, namespace=namespace)
-            if pod.status.phase != "Running": return False, f"Pod is {pod.status.phase}"
+            if pod.status.phase != "Running":
+                return False, f"Pod is {pod.status.phase}"
             image = check.get("image")
             if image and not any(c.image == image for c in pod.spec.containers):
                 return False, f"Image {image} not found in pod"
@@ -91,8 +121,9 @@ def _run_single_check(apis: Dict[str, Any], check: Dict[str, Any]) -> Tuple[bool
             label_key = check.get("label_key")
             label_value = check.get("label_value")
             found = any(n.metadata.labels.get(label_key) == label_value for n in nodes)
-            if not found: return False, f"No node with label {label_key}={label_value}"
-            
+            if not found:
+                return False, f"No node with label {label_key}={label_value}"
+
         # APPS V1
         elif check_type == "deployment_exists":
             dep = apis["apps"].read_namespaced_deployment(name=name, namespace=namespace)
@@ -137,14 +168,16 @@ def _run_single_check(apis: Dict[str, Any], check: Dict[str, Any]) -> Tuple[bool
         # BASH CHECK (Fallback for complex logical tests)
         elif check_type == "bash_check":
             command = check.get("command")
-            if not command: return False, "Missing bash command"
+            if not command:
+                return False, "Missing bash command"
             import subprocess
+
             res = subprocess.run(command, shell=True, capture_output=True, text=True)
             if res.returncode != 0:
                 return False, f"Command failed: {res.stderr}"
         else:
             return False, f"Unknown check type: {check_type}"
-            
+
         return True, ""
     except ApiException as e:
         if e.status == 404:
