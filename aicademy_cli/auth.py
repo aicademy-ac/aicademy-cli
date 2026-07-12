@@ -48,7 +48,6 @@ def _format_poll_error(e: api.APIError, verbose: bool) -> str:
 async def _check_server_reachable(verbose: bool) -> bool:
     """Pre-flight: verify the API server is up before starting the flow."""
     base = config.API_BASE_URL
-    console.print(f"[dim]Connecting to {base}...[/dim]")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"{base}/api/health")
@@ -104,7 +103,7 @@ async def start_device_login(verbose: bool = False) -> None:
                 console.print(f"[dim yellow]{_format_poll_error(e, verbose)}[/dim yellow]")
                 if consecutive_404 >= 3:
                     console.print(
-                        "[dim yellow]  /api/auth/cli-code not found after 3 attempts.[/dim yellow]"
+                        "[dim yellow]  /api/cli-code not found after 3 attempts.[/dim yellow]"
                     )
                     console.print(
                         "[bold yellow]  Restart: cd ../www.aicademy.ac && npm run dev[/bold yellow]"
@@ -117,9 +116,6 @@ async def start_device_login(verbose: bool = False) -> None:
         status = status_data.get("status")
         if verbose:
             console.print(f"[dim]Poll {attempt}: status={status}[/dim]")
-            url = f"{config.API_BASE_URL}/api/auth/cli-code?device_code={device_code}"
-            console.print(f"[dim]  URL: {url}[/dim]")
-            console.print(f"[dim]  Response: {status_data}[/dim]")
         if status == "authorized":
             approved = True
             break
