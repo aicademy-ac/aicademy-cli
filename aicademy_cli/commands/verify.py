@@ -113,11 +113,16 @@ fi
 
         console.print("[dim]Running verify script from API...[/dim]\n")
         try:
+            import os
+            env = os.environ.copy()
+            env["KUBECONFIG"] = str(config.KUBECONFIG_PATH)
+            
             proc = subprocess.run(
                 ["bash"],
                 input=verify_script_content.encode("utf-8"),
                 capture_output=True,
                 timeout=120,
+                env=env,
             )
             passed = proc.returncode == 0
             message = (

@@ -5,6 +5,8 @@ from typing import Any
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+from .. import config as cli_config
+
 
 def run_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
@@ -13,7 +15,7 @@ def run_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     results = []
     try:
-        config.load_kube_config()
+        config.load_kube_config(config_file=str(cli_config.KUBECONFIG_PATH))
     except Exception as e:
         return [
             {
@@ -165,14 +167,28 @@ def _run_single_check(apis: dict[str, Any], check: dict[str, Any]) -> tuple[bool
         elif check_type == "pdb_exists":
             apis["policy"].read_namespaced_pod_disruption_budget(name=name, namespace=namespace)
 
-        # BASH CHECK (Fallback for complex logical tests)
         elif check_type == "bash_check":
             command = check.get("command")
             if not command:
                 return False, "Missing bash command"
             import subprocess
+            import os
 
-            res = subprocess.run(command, shell=True, capture_output=True, text=True)
+            env = os.environ.copy()
+            env["KUBECONFIG"] = str(cli_config.KUBECONFIG_PATH)
+            
+            try:
+                res = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                return False, "Command timed out after 30 seconds"
+
             if res.returncode != 0:
                 return False, f"Command failed: {res.stderr}"
         else:
