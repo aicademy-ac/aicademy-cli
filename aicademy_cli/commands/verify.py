@@ -159,9 +159,9 @@ fi
                 )
 
         if typer.confirm("\nWould you like to clear the practice environment now?"):
-            from .question import clear
+            from .question import _clear_async
 
-            clear(question_id=question_id, verbose=False)
+            await _clear_async(question_id=question_id, verbose=False)
         else:
             console.print(
                 "\n[dim]You can clean it up later with: [bold]aicademy question clear[/bold][/dim]"
