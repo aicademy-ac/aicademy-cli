@@ -110,9 +110,11 @@ def verify_session(session_id: str, verification_token: str, check_results: list
         payload: dict[str, object] = {
             "passed": result.get("passed"),
             "message": result.get("message", ""),
-            "score": result.get("score"),
             "verificationToken": verification_token,
         }
+        score = result.get("score")
+        if score is not None:
+            payload["score"] = score
         if check_results is not None:
             payload["checkResults"] = check_results
         resp = httpx.post(
