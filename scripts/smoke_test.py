@@ -242,7 +242,6 @@ def aicademy(
 
 def wait_for_resource(cmd: list[str], timeout: int = 30) -> None:
     """Poll until a kubectl get command succeeds."""
-    env = {"KUBECONFIG": str(KUBECONFIG_PATH)}
     deadline = time.time() + timeout
     while time.time() < deadline:
         result = subprocess.run(
