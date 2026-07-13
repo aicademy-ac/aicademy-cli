@@ -1,6 +1,6 @@
 [project]
 name = "aicademy"
-version = "0.3.4"
+version = "0.4.0"
 description = "Aicademy Practice CLI — solve Kubernetes exam scenarios locally with KIND"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,9 +28,11 @@ dependencies = [
     "rich>=15.0.0",
     "httpx>=0.28.1",
     "kubernetes>=29.0.0",
-    "textual>=0.70.0",
+    "docker>=7.0.0",
     "qrcode>=7.4.0",
     "pyperclip>=1.8.0",
+    "pydantic>=2.0",
+    "packaging>=21.0",
 ]
 
 [project.scripts]
@@ -60,6 +62,7 @@ dev = [
     "python-dotenv>=1.2.1",
     "respx>=0.22",
     "taskipy>=1.12",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.taskipy.tasks]
@@ -69,7 +72,6 @@ fmt = "ruff format ."
 typecheck = "mypy aicademy_cli"
 check = "ruff check . && mypy aicademy_cli && python -m pytest -v"
 build = "uv build"
-tui = "python -m aicademy_cli tui"
 
 [tool.ruff]
 line-length = 100
@@ -87,6 +89,3 @@ ignore_missing_imports = true
 module = "anyio.*"
 follow_imports = "skip"
 
-[[tool.mypy.overrides]]
-module = "textual.*"
-follow_imports = "skip"

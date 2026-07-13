@@ -39,8 +39,7 @@ async def _check_server_reachable() -> bool:
             return resp.status_code < 400
     except httpx.RequestError:
         console.print(
-            f"[red]Cannot connect to {base}.[/red]\n"
-            "[dim]Make sure the server is running.[/dim]"
+            f"[red]Cannot connect to {base}.[/red]\n[dim]Make sure the server is running.[/dim]"
         )
         return False
 
@@ -178,9 +177,7 @@ async def logout_user() -> None:
     try:
         await api.logout(token)
     except api.APIError as e:
-        console.print(
-            f"[dim yellow]Could not sync logout: {e.response_data}[/dim yellow]"
-        )
+        console.print(f"[dim yellow]Could not sync logout: {e.response_data}[/dim yellow]")
     cfg.pop("token", None)
     cfg.pop("active_session", None)
     config.save_config(cfg)
@@ -208,4 +205,3 @@ async def whoami() -> None:
         body += f"\n[dim]Email:[/dim] {email}"
     body += f"\n[dim]Plan:[/dim] {plan}"
     console.print(Panel(body, title="Logged in as", border_style="green"))
-

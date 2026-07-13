@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -33,10 +34,22 @@ def get_config() -> dict[str, Any]:
         return {}
 
 
+def _set_unix_permissions(path: Path, mode: int) -> None:
+    """Set file/directory permissions on Unix systems."""
+    if sys.platform == "win32":
+        return
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def save_config(data: dict[str, Any]) -> None:
     """Save config to ~/.aicademy/config.json"""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _set_unix_permissions(CONFIG_DIR, 0o700)
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _set_unix_permissions(CONFIG_FILE, 0o600)
 
 
 def get_token() -> str | None:
@@ -60,5 +73,5 @@ def set_active_session(session: dict[str, Any] | None) -> None:
 
 
 def get_user_config() -> dict[str, Any]:
-    """Return user-level preferences (placeholder for TUI settings)."""
+    """Return user-level preferences."""
     return {}

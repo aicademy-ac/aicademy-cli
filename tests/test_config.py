@@ -16,8 +16,9 @@ def temp_config(tmp_path: Path) -> Path:
     config_dir = tmp_path / ".aicademy"
     config_file = config_dir / "config.json"
     config_dir.mkdir(parents=True, exist_ok=True)
-    with patch.object(config, "CONFIG_DIR", config_dir), patch.object(
-        config, "CONFIG_FILE", config_file
+    with (
+        patch.object(config, "CONFIG_DIR", config_dir),
+        patch.object(config, "CONFIG_FILE", config_file),
     ):
         yield config_file
 
@@ -37,4 +38,3 @@ def test_config_round_trip(temp_config: Path) -> None:
 
     loaded = json.loads(temp_config.read_text(encoding="utf-8"))
     assert loaded["token"] == "abc123"
-

@@ -25,9 +25,6 @@ def temp_config(tmp_path: Path) -> Path:
         yield config_file
 
 
-
-
-
 @respx.mock
 @pytest.mark.asyncio
 async def test_login_with_token(temp_config: Path) -> None:

@@ -132,24 +132,6 @@ def clear(
     question.clear(question_id=question_id, verbose=verbose)
 
 
-# TUI is hidden from the CLI for now - still alpha.
-# To re-enable, uncomment the block below.
-#
-# @app.command()
-# def tui() -> None:
-#     """Launch the interactive TUI [alpha] - experimental, may have bugs."""
-#     try:
-#         from .tui import run as run_tui
-#     except ImportError as exc:
-#         console.print(
-#             "[red]✗ TUI not available.[/red]\n"
-#             "Install the TUI dependencies: [bold]pip install aicademy[tui][/bold]"
-#         )
-#         raise typer.Exit(1) from exc
-# 
-#     run_tui()
-
-
 # Welcome banner when --help is shown
 def _version_callback(value: bool) -> None:
     if value:

@@ -1,17 +1,18 @@
+"""KIND cluster lifecycle helpers."""
+
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import typer
 from rich.console import Console
 
-from .. import api as api_client
 from .. import config
-from ..core import verify_engine
+from .cluster_context import ClusterTargetingError
 
 console = Console()
 
@@ -71,11 +72,14 @@ def create_cluster(
             stdout=subprocess.DEVNULL if not verbose else None,
             stderr=subprocess.STDOUT if not verbose else None,
         )
-    except subprocess.CalledProcessError:
+        if sys.platform != "win32" and config.KUBECONFIG_PATH.exists():
+            os.chmod(config.KUBECONFIG_PATH, 0o600)
+    except subprocess.CalledProcessError as exc:
         console.print(
-            "[yellow]Could not export kubeconfig; "
-            "kubectl may fall back to the default config.[/yellow]"
+            "[red]Could not export kubeconfig for the practice cluster. "
+            "Aborting to avoid targeting the default cluster.[/red]"
         )
+        raise typer.Exit(1) from exc
 
 
 def delete_cluster(cluster_name: str, verbose: bool = False) -> None:
@@ -98,26 +102,30 @@ def delete_cluster(cluster_name: str, verbose: bool = False) -> None:
         console.print("[yellow]Could not delete cluster (may not exist).[/yellow]")
 
 
-async def verify_session(session: dict[str, Any], question_id: str) -> str:
-    """Run verification checks for the active session and report the result."""
-    category = question_id.split("-")[0]
+def ensure_cluster_targeted(cluster_name: str) -> None:
+    """Raise ClusterTargetingError if the active kubeconfig does not match cluster_name."""
+    if not config.KUBECONFIG_PATH.exists():
+        raise ClusterTargetingError(
+            f"Practice kubeconfig not found: {config.KUBECONFIG_PATH}. "
+            f"Start the question with 'aicademy question start {cluster_name}' first."
+        )
+    # Parse kubeconfig to confirm current context points at cluster_name
+    import yaml
+
     try:
-        question = await api_client.get_question(category, question_id)
-    except api_client.APIError as e:
-        return f"Could not load question details: {e}"
+        data = yaml.safe_load(config.KUBECONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ClusterTargetingError(f"Could not parse kubeconfig: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ClusterTargetingError("Invalid kubeconfig format.")
+    current_ctx = data.get("current-context")
+    contexts = {c.get("name"): c for c in data.get("contexts", []) if isinstance(c, dict)}
+    ctx = contexts.get(current_ctx)
+    if not ctx:
+        raise ClusterTargetingError("No current context in practice kubeconfig.")
+    actual_cluster = ctx.get("context", {}).get("cluster")
+    if actual_cluster != cluster_name:
+        raise ClusterTargetingError(
+            f"Kubeconfig cluster mismatch: expected {cluster_name}, got {actual_cluster}."
+        )
 
-    checks = question.get("verifyChecks") or question.get("verify_checks") or []
-    if not checks:
-        return "No verification checks defined for this question."
-
-    results = verify_engine.run_checks(checks)
-    passed = sum(1 for r in results if r.get("passed"))
-    total = len(results)
-    lines = [f"Verification: {passed}/{total} passed\n"]
-    for r in results:
-        icon = "OK" if r.get("passed") else "FAIL"
-        color = "green" if r.get("passed") else "red"
-        lines.append(f"[{color}]{icon}[/{color}] {r.get('name', 'Check')}")
-        if not r.get("passed") and r.get("message"):
-            lines.append(f"  [dim]{r['message']}[/dim]")
-    return "\n".join(lines)

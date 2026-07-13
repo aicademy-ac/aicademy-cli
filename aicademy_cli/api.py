@@ -6,7 +6,13 @@ from typing import Any
 
 import httpx
 
-from . import config
+from . import __version__, config
+from .models import (
+    ActiveSessionResponse,
+    QuestionDetailResponse,
+    StartSessionResponse,
+)
+from .version import IncompatibleCliVersionError, check_minimum_cli_version
 
 _CLIENT_TIMEOUT = 10
 _client: httpx.AsyncClient = httpx.AsyncClient(timeout=_CLIENT_TIMEOUT)
@@ -25,10 +31,11 @@ class APIError(Exception):
 
 
 def _get_headers(token: str | None = None) -> dict[str, str]:
+    headers: dict[str, str] = {"X-Aicademy-CLI-Version": __version__}
     t = token or config.get_token()
     if t:
-        return {"Authorization": f"Bearer {t}"}
-    return {}
+        headers["Authorization"] = f"Bearer {t}"
+    return headers
 
 
 async def _request(method: str, url: str, **kwargs: Any) -> Any:
@@ -110,32 +117,51 @@ async def exchange_device_code(device_code: str) -> dict[str, Any]:
 # ─── Practice ───────────────────────────────────────────────────────────────────
 
 
-async def get_sessions() -> dict[str, Any]:
-    return await _request(
+async def get_sessions() -> ActiveSessionResponse:
+    data = await _request(
         "GET",
         f"{config.API_BASE_URL}/api/practice/sessions",
         headers=_get_headers(),
         timeout=10,
     )
+    response = ActiveSessionResponse.model_validate(data)
+    try:
+        if response.question:
+            check_minimum_cli_version(response.question.minimumCliVersion)
+    except IncompatibleCliVersionError as exc:
+        raise APIError(str(exc), 426, {"upgrade_required": True}) from exc
+    return response
 
 
-async def start_session(question_id: str, cluster_name: str) -> dict[str, Any]:
-    return await _request(
+async def start_session(question_id: str, cluster_name: str) -> StartSessionResponse:
+    data = await _request(
         "POST",
         f"{config.API_BASE_URL}/api/practice/sessions",
         json={"questionId": question_id, "clusterName": cluster_name},
         headers=_get_headers(),
         timeout=15,
     )
+    response = StartSessionResponse.model_validate(data)
+    try:
+        check_minimum_cli_version(response.minimumCliVersion)
+    except IncompatibleCliVersionError as exc:
+        raise APIError(str(exc), 426, {"upgrade_required": True}) from exc
+    return response
 
 
-async def get_question(category: str, question_id: str) -> dict[str, Any]:
-    return await _request(
+async def get_question(category: str, question_id: str) -> QuestionDetailResponse:
+    data = await _request(
         "GET",
         f"{config.API_BASE_URL}/api/practice/questions/{category}/{question_id}",
         headers=_get_headers(),
         timeout=10,
     )
+    response = QuestionDetailResponse.model_validate(data)
+    try:
+        check_minimum_cli_version(response.minimumCliVersion)
+    except IncompatibleCliVersionError as exc:
+        raise APIError(str(exc), 426, {"upgrade_required": True}) from exc
+    return response
 
 
 async def get_all_questions() -> dict[str, Any]:
@@ -175,7 +201,7 @@ async def verify_session(
 
     await _request(
         "POST",
-        f"{config.API_BASE_URL}/api/practice/sessions/{session_id}",
+        f"{config.API_BASE_URL}/api/practice/sessions/{session_id}/verify",
         json=payload,
         headers=_get_headers(),
         timeout=10,

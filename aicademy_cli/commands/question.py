@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 import webbrowser
 from typing import Any
 
@@ -17,7 +16,9 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from .. import api, config
-from ..core import kind, utils
+from ..core import cluster_setup, kind, utils
+from ..core.utils import escape_rich_markup
+from ..models import StartSessionResponse
 from .verify import app_verify
 
 console = Console()
@@ -126,7 +127,7 @@ async def _start_async(question_id: str | None, verbose: bool) -> None:
     console.print(f"\n[bold cyan]Starting question [white]{qid}[/white]...[/bold cyan]")
     cluster_name = f"aicademy-{qid}"
 
-    data: dict[str, Any] | None = None
+    data: StartSessionResponse | None = None
     try:
         data = await api.start_session(qid, cluster_name)
     except api.APIError as e:
@@ -137,41 +138,51 @@ async def _start_async(question_id: str | None, verbose: bool) -> None:
     if data is None:
         raise typer.Exit(1) from None
 
-    session = data
-    question = data.get("question", {})
+    question = data.question
 
     # Cache session locally
     config.set_active_session(
         {
-            "sessionId": session.get("sessionId"),
+            "sessionId": data.sessionId,
             "questionId": qid,
             "clusterName": cluster_name,
-            "category": question.get("category", ""),
-            "verificationToken": session.get("verificationToken"),
+            "category": question.category,
+            "verificationToken": data.verificationToken,
         }
     )
 
     # Create KIND cluster
     kind.create_cluster(
         cluster_name,
-        config_content=data.get("kindConfigContent"),
+        config_content=data.kindConfigContent,
         verbose=verbose,
     )
 
-    # Run setup commands if any
-    setup_commands = data.get("setupCommands", [])
-    if setup_commands:
-        console.print("\n[bold cyan]Running setup commands...[/bold cyan]")
-        for cmd in setup_commands:
-            console.print(f"[dim]Running: {cmd}[/dim]")
-            try:
-                subprocess.run(cmd, shell=True, check=True)
-            except subprocess.CalledProcessError as e:
-                console.print(f"[red]✗ Setup command failed: {e}[/red]")
-                console.print(
-                    "[dim yellow]Proceeding anyway, but the environment may not be "
-                    "correctly prepared.[/dim yellow]"
-                )
+    # Apply declarative cluster state if provided
+    if data.clusterState:
+        try:
+            await cluster_setup.apply_cluster_state(
+                cluster_name,
+                data.clusterState.model_dump(),
+                config.KUBECONFIG_PATH,
+                cluster_template=question.clusterTemplate,
+            )
+        except cluster_setup.ClusterSetupError as e:
+            console.print(f"[red]? Cluster setup failed: {e}[/red]")
+            raise typer.Exit(1) from e
+
+    # Apply declarative breakers (chaos/failure injection) if provided
+    if data.breakers:
+        try:
+            await cluster_setup.apply_breakers(
+                cluster_name,
+                [b.model_dump() for b in data.breakers],
+                config.KUBECONFIG_PATH,
+                cluster_template=question.clusterTemplate,
+            )
+        except cluster_setup.ClusterSetupError as e:
+            console.print(f"[red]? Breaker injection failed: {e}[/red]")
+            raise typer.Exit(1) from e
 
     # Print success panel
     md = Markdown(
@@ -182,11 +193,11 @@ async def _start_async(question_id: str | None, verbose: bool) -> None:
     console.print(
         Panel(
             f"[bold green]✓ Environment Ready![/bold green]\n\n"
-            f"[bold]Question:[/bold]  {question.get('title', qid)}\n"
-            f"[bold]Level:[/bold]     {question.get('level', '').capitalize()}\n"
-            f"[bold]Category:[/bold]  {question.get('category', '').upper()}\n"
+            f"[bold]Question:[/bold]  {escape_rich_markup(question.title)}\n"
+            f"[bold]Level:[/bold]     {escape_rich_markup(question.level.capitalize())}\n"
+            f"[bold]Category:[/bold]  {escape_rich_markup(question.category.upper())}\n"
             f"[bold]Cluster:[/bold]   {cluster_name}\n"
-            f"[bold]Time:[/bold]      ~{question.get('estimatedMinutes', '?')} minutes\n\n"
+            f"[bold]Time:[/bold]      ~{question.estimatedMinutes} minutes\n\n"
             "[bold]Next steps:[/bold]",
             title="🚀  Session Started",
             border_style="green",
@@ -200,7 +211,7 @@ async def _handle_start_conflict(
     cluster_name: str,
     e: api.APIError,
     verbose: bool,
-) -> dict[str, Any] | None:
+) -> StartSessionResponse | None:
     if e.status_code != 409:
         if e.status_code == 402:
             utils.format_access_error(e)
@@ -308,31 +319,32 @@ async def _instructions_async(question_id: str | None, web: bool) -> None:
             console.print(f"[red]✗ {e.status_code}: {e.response_data}[/red]")
         raise typer.Exit(1) from e
 
-    q = data.get("question", {})
-    tasks = q.get("tasks", [])
-    hints = q.get("hints", [])
+    q = data.question
+    tasks = q.tasks
+    hints = q.hints
 
     console.print(
         Panel(
-            f"[bold]{q.get('title', '')}[/bold]\n\n"
-            f"[dim]Category:[/dim] {q.get('category', '').upper()}  "
-            f"[dim]Level:[/dim] {q.get('level', '').capitalize()}  "
-            f"[dim]Time:[/dim] ~{q.get('estimatedMinutes', '?')}m",
+            f"[bold]{escape_rich_markup(q.title)}[/bold]\n\n"
+            f"[dim]Category:[/dim] {escape_rich_markup(q.category.upper())}  "
+            f"[dim]Level:[/dim] {escape_rich_markup(q.level.capitalize())}  "
+            f"[dim]Time:[/dim] ~{q.estimatedMinutes}m",
             title=f"📋  Question {qid}",
             border_style="cyan",
         )
     )
 
-    if q.get("scenario"):
+    if q.scenario:
         console.print("\n[bold]Scenario[/bold]")
-        console.print(Markdown(q["scenario"]))
+        console.print(Markdown(escape_rich_markup(q.scenario)))
 
     if tasks:
         console.print("\n[bold]Tasks[/bold]")
         for i, task in enumerate(tasks, 1):
             console.print(
                 Panel(
-                    f"[bold]{task.get('title', '')}[/bold]\n\n{task.get('description', '')}",
+                    f"[bold]{escape_rich_markup(task.title)}[/bold]\n\n"
+                    f"{escape_rich_markup(task.description)}",
                     title=f"Task {i}",
                     border_style="dim",
                 )
@@ -341,12 +353,70 @@ async def _instructions_async(question_id: str | None, web: bool) -> None:
     if hints:
         console.print("\n[bold dim]Hints (expand if stuck)[/bold dim]")
         for hint in hints:
-            console.print(f"  [dim]→ {hint}[/dim]")
+            console.print(f"  [dim]→ {escape_rich_markup(hint)}[/dim]")
 
     console.print(
         "\n[dim]When done:[/dim] [bold]aicademy verify[/bold]  |  "
         "[dim]To clean up:[/dim] [bold]aicademy question clear[/bold]"
     )
+
+
+@app.command("break")
+def break_env(
+    question_id: str | None = typer.Argument(
+        None, help="Question ID (auto-detected from active session)"
+    ),
+) -> None:
+    """Re-apply breakers (chaos/failure injection) to the current practice environment."""
+    asyncio.run(_break_async(question_id))
+
+
+async def _break_async(question_id: str | None) -> None:
+    utils.require_auth()
+
+    session = config.get_active_session()
+    if not session and not question_id:
+        console.print(
+            "[red]✗ No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    qid = utils.normalize_question_id(question_id) or (
+        session.get("questionId") if session else None
+    )
+    if not qid:
+        console.print("[red]✗ Could not determine question ID.[/red]")
+        raise typer.Exit(1)
+        
+    cat = (session or {}).get("category", qid.split("-")[0] if qid else "")
+
+    try:
+        data = await api.get_question(cat, qid)
+    except api.APIError as e:
+        console.print(f"[red]✗ API error ({e.status_code}): {e.response_data}[/red]")
+        raise typer.Exit(1) from e
+
+    breakers = data.question.breakers
+    if not breakers:
+        console.print("[yellow]This question has no breakers configured.[/yellow]")
+        return
+
+    cluster_name = (session or {}).get("clusterName") or f"aicademy-{qid}"
+    console.print(
+        f"[bold cyan]Re-applying breakers to [white]{cluster_name}[/white]...[/bold cyan]"
+    )
+
+    try:
+        await cluster_setup.apply_breakers(
+            cluster_name,
+            [b.model_dump() for b in breakers],
+            config.KUBECONFIG_PATH,
+            cluster_template=data.question.clusterTemplate,
+        )
+        console.print("[bold green]✓ Breakers applied successfully.[/bold green]")
+    except cluster_setup.ClusterSetupError as e:
+        console.print(f"[red]? Breaker injection failed: {e}[/red]")
+        raise typer.Exit(1) from e
 
 
 @app.command()

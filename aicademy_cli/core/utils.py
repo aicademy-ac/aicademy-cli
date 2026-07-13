@@ -20,6 +20,11 @@ _QID_RE = re.compile(
 )
 
 
+def escape_rich_markup(text: str) -> str:
+    """Escape Rich markup brackets to prevent accidental formatting."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 def require_auth() -> str:
     token = config.get_token()
     if not token:
