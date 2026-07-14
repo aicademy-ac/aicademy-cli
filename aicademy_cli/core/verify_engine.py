@@ -442,10 +442,10 @@ def _check_container_exec(check: dict[str, Any], ctx: CheckContext) -> tuple[boo
     expected_output = check.get("expectedOutput")
     if expected_output is not None and expected_output not in output:
         return False, f"Expected output {expected_output} not found"
-    for fragment in check.get("outputContains", []):
+    for fragment in (check.get("outputContains") or []):
         if fragment not in output:
             return False, f"Missing output fragment: {fragment}"
-    for fragment in check.get("outputNotContains", []):
+    for fragment in (check.get("outputNotContains") or []):
         if fragment in output:
             return False, f"Unexpected output fragment: {fragment}"
     return True, ""
