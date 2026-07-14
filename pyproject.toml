@@ -1,6 +1,6 @@
 [project]
 name = "aicademy"
-version = "0.4.0"
+version = "0.4.1"
 description = "Aicademy Practice CLI — solve Kubernetes exam scenarios locally with KIND"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -24,16 +24,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "typer",
+    "typer>=0.12.0",
     "rich>=15.0.0",
     "httpx>=0.28.1",
     "kubernetes>=29.0.0",
     "docker>=7.0.0",
-    "qrcode>=7.4.0",
-    "pyperclip>=1.8.0",
     "pydantic>=2.0",
     "packaging>=21.0",
 ]
+
 
 [project.scripts]
 aicademy = "aicademy_cli.main:app"
@@ -59,11 +58,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "mypy>=1.8,<2.0",
     "ruff>=0.3",
-    "python-dotenv>=1.2.1",
     "respx>=0.22",
     "taskipy>=1.12",
     "types-PyYAML>=6.0",
+    "pip-audit>=2.7",
 ]
+
 
 [tool.taskipy.tasks]
 test = "python -m pytest -v"

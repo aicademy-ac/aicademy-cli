@@ -21,14 +21,27 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Reject committed .env files
+        run: |
+          if find . -name ".env" -not -path "./.git/*" | grep -q .; then
+            echo "❌ .env files are not allowed in the repository. Use .env.example for templates."
+            exit 1
+          fi
+
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
       - name: Run Pytest
         run: uv run pytest
+
+      - name: Audit Python dependencies
+        run: uv run pip-audit --desc
+        continue-on-error: true
 
   build:
     name: Build Package

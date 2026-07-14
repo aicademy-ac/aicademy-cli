@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
 from typing import Any
 
 import typer
@@ -12,6 +15,29 @@ from rich.panel import Panel
 from .. import api, config
 from ..core import utils, verify_engine
 from ..core.utils import escape_rich_markup
+
+
+def _sign_verification_result(
+    secret: str,
+    session_id: str,
+    question_id: str,
+    passed: bool,
+    score: int | None,
+    check_results: list[dict[str, Any]],
+) -> str:
+    """Compute an HMAC-SHA256 signature over the verification result payload."""
+    canonical = json.dumps(
+        {
+            "sessionId": session_id,
+            "questionId": question_id,
+            "passed": passed,
+            "score": score,
+            "checkResults": check_results,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
 
 console = Console()
 
@@ -111,11 +137,28 @@ async def _app_verify_async(question_id: str | None) -> None:
     # Report result to API, whether passed or failed
     if session_id:
         try:
+            verification_secret = active_session.get("verificationSecret")
+            if not verification_secret:
+                console.print(
+                    "[yellow]⚠ Session was started with an older CLI version. "
+                    "Please clear and restart the question to enable result signing.[/yellow]"
+                )
+                raise typer.Exit(1)
+
+            signature = _sign_verification_result(
+                verification_secret,
+                session_id,
+                qid,
+                all_passed,
+                result.get("score"),
+                check_results,
+            )
             await api.verify_session(
                 session_id,
                 active_session.get("verificationToken", ""),
                 check_results,
                 result,
+                signature,
             )
         except api.APIError as e:
             console.print(

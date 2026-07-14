@@ -39,6 +39,7 @@ async def test_verify_session_posts_to_verify_endpoint(temp_config: Path) -> Non
         verification_token="tok-123",
         check_results=[{"name": "check-1", "passed": True, "message": ""}],
         result={"passed": True, "message": "All checks passed"},
+        signature="sig-123",
     )
 
     assert route.called
@@ -47,6 +48,7 @@ async def test_verify_session_posts_to_verify_endpoint(temp_config: Path) -> Non
     body = route.calls.last.request.content
     assert b'"verificationToken":"tok-123"' in body
     assert b'"checkResults"' in body
+    assert b'"signature":"sig-123"' in body
 
 
 @respx.mock

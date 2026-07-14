@@ -137,8 +137,8 @@ def check_prerequisites() -> None:
 
 def seed_cli_token() -> str:
     token = f"cli-test-{uuid.uuid4().hex}"
-    now = int(time.time())
-    expires_at = now + 30 * 24 * 60 * 60
+    now_ms = int(time.time() * 1000)
+    expires_at = now_ms + 30 * 24 * 60 * 60 * 1000
     conn = sqlite3.connect(LOCAL_DB)
     conn.execute(
         """
@@ -147,7 +147,7 @@ def seed_cli_token() -> str:
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (uuid.uuid4().hex, expires_at, token, now, now, "127.0.0.1", "aicademy-cli", USER_ID),
+        (uuid.uuid4().hex, expires_at, token, now_ms, now_ms, "127.0.0.1", "aicademy-cli", USER_ID),
     )
     conn.commit()
     conn.close()
@@ -167,9 +167,16 @@ def start_dev_server() -> subprocess.Popen:
     print("[INFO] Starting app dev server...")
     log_path = APP_ROOT / "dev-server.log"
     err_path = APP_ROOT / "dev-server.err"
+    env = os.environ.copy()
+    # Point the app at the local SQLite DB used for smoke testing.
+    env.setdefault("DATABASE_URL", f"file:{LOCAL_DB}")
+    env.setdefault("DATABASE_AUTH_TOKEN", "")
+    env.setdefault("BETTER_AUTH_SECRET", "smoke-test-secret")
+    env.setdefault("BETTER_AUTH_URL", API_URL)
     proc = subprocess.Popen(
         ["bun", "run", "dev"],
         cwd=APP_ROOT,
+        env=env,
         stdout=open(log_path, "w", encoding="utf-8", errors="replace"),
         stderr=open(err_path, "w", encoding="utf-8", errors="replace"),
     )
@@ -213,7 +220,7 @@ def cleanup_test_sessions() -> None:
         SET status = 'abandoned', completed_at = ?
         WHERE user_id = ? AND status = 'active'
         """,
-        (int(time.time()), USER_ID),
+        (int(time.time() * 1000), USER_ID),
     )
     conn.commit()
     conn.close()

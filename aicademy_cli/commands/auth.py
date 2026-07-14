@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import typer
 from rich.console import Console
@@ -19,7 +20,7 @@ def login(
         None,
         "--token",
         "-t",
-        help="Paste a CLI token directly (skip browser flow)",
+        help="Paste a CLI token directly (skip browser flow). Insecure: leaks to shell history.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -29,7 +30,16 @@ def login(
     ),
 ) -> None:
     """Login to Aicademy and store your CLI token."""
+    env_token = os.environ.get("AICADEMY_CLI_TOKEN")
+    if env_token:
+        token = env_token
+    elif token:
+        console.print(
+            "[yellow]⚠ Using --token leaks the token to shell history. "
+            "Prefer the AICADEMY_CLI_TOKEN environment variable.[/yellow]"
+        )
     asyncio.run(auth_flow.perform_login(token, verbose=verbose))
+
 
 
 @app.command()

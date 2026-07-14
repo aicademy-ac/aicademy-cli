@@ -6,6 +6,7 @@ import asyncio
 import json
 import webbrowser
 from typing import Any
+from urllib.parse import quote
 
 import typer
 from rich import box
@@ -148,6 +149,7 @@ async def _start_async(question_id: str | None, verbose: bool) -> None:
             "clusterName": cluster_name,
             "category": question.category,
             "verificationToken": data.verificationToken,
+            "verificationSecret": data.verificationSecret,
         }
     )
 
@@ -299,10 +301,13 @@ async def _instructions_async(question_id: str | None, web: bool) -> None:
 
     if web:
         cat = session.get("category", "") if session else ""
-        url = f"{config.API_BASE_URL}/practice/{cat}/{qid}"
+        if not utils.is_valid_category(cat):
+            cat = qid.split("-")[0] if qid else ""
+        url = f"{config.API_BASE_URL}/practice/{quote(cat, safe='')}/{quote(qid, safe='')}"
         console.print(f"[cyan]Opening:[/cyan] {url}")
         webbrowser.open(url)
         raise typer.Exit()
+
 
     session_data = config.get_active_session() or {}
     cat = session_data.get("category", qid.split("-")[0] if qid else "")
@@ -402,6 +407,9 @@ async def _break_async(question_id: str | None) -> None:
         return
 
     cluster_name = (session or {}).get("clusterName") or f"aicademy-{qid}"
+    if not utils.is_valid_cluster_name(cluster_name):
+        console.print("[red]✗ Invalid cluster name.[/red]")
+        raise typer.Exit(1)
     console.print(
         f"[bold cyan]Re-applying breakers to [white]{cluster_name}[/white]...[/bold cyan]"
     )
@@ -451,9 +459,13 @@ async def _clear_async(question_id: str | None, verbose: bool) -> None:
 
     session_id = (session or {}).get("sessionId")
     cluster_name = (session or {}).get("clusterName") or f"aicademy-{qid}"
+    if not utils.is_valid_cluster_name(cluster_name):
+        console.print("[red]✗ Invalid cluster name.[/red]")
+        raise typer.Exit(1)
 
     # Delete KIND cluster
     kind.delete_cluster(cluster_name, verbose=verbose)
+
 
     # Mark session as abandoned via API
     if session_id:

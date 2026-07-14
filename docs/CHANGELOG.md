@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-07-14 — Phase 1 Security Hardening (Launch Blockers)
+
+### Fixed
+
+- **`.env` handling corrected**: ensured `.env` files are gitignored in both repos and added CI checks to prevent accidental commits. Local `.env` files are acceptable for development; production secrets are injected via Cloudflare Workers secrets / GitHub Actions secrets.
+- **CLI loaded untrusted `.env` from current working directory**: removed `load_dotenv()` from `aicademy_cli/config.py`. A malicious `.env` can no longer redirect API traffic or harvest tokens.
+- **CLI accepted insecure HTTP API URLs**: `API_BASE_URL` now rejects non-HTTPS URLs unless the host is `localhost` or `127.0.0.1`.
+- **Razorpay payment verification bypass**: removed the API-only fallback in `/api/payment/verify`. Signature is now required, and the payment must match a pending transaction owned by the user.
+- **Practice verification trusted client-reported pass/fail**: implemented HMAC-SHA256 signed results using a per-session `verificationSecret`. Server derives pass/fail from `checkResults` and validates the signature before awarding XP.
+
+### Added
+
+- `verificationSecret` column to `practice_sessions` table and migration `drizzle/0014_add_verification_secret.sql`.
+- `AICADEMY_CLI_TOKEN` environment variable support for secure CLI login.
+- `.env` file rejection step in both CLI and app CI workflows.
+- `pip-audit` dependency audit step in CLI CI.
+
+### Removed
+
+- Unused CLI dependencies: `qrcode`, `pyperclip`, `python-dotenv`.
+
+### Files touched
+
+- `aicademy_cli/config.py` — removed `load_dotenv`, added HTTPS validation.
+- `aicademy_cli/commands/auth.py` — added `AICADEMY_CLI_TOKEN` env support and `--token` deprecation warning.
+- `aicademy_cli/commands/verify.py` — computes HMAC signature over verification results.
+- `aicademy_cli/api.py` — sends `signature` in verify payload.
+- `aicademy_cli/models.py` — added `verificationSecret` to `StartSessionResponse`.
+- `aicademy_cli/pyproject.toml` — removed unused deps, added `pip-audit`.
+- `src/lib/server/db/schema.ts` — added `verificationSecret` column.
+- `src/routes/api/practice/sessions/+server.ts` — generates and returns `verificationSecret`.
+- `src/routes/api/practice/sessions/[id]/verify/+server.ts` — validates HMAC signature, derives pass/fail server-side.
+- `src/routes/api/payment/verify/+server.ts` — requires signature and matches pending transaction.
+- `src/routes/api/payment/order/+server.ts` — stores `razorpayOrderId` in transaction metadata.
+- `src/routes/api/payment/subscription/+server.ts` — creates pending transaction with `razorpaySubscriptionId`.
+- `.github/workflows/publish.yml` and `.github/workflows/ci.yml` — reject `.env` files.
+
+### Verification
+
+- `uv run ruff check . && uv run mypy aicademy_cli && uv run python -m pytest -v` — all pass (27 tests)
+- `bun run validate:practice` — 300 questions, 0 errors
+- `bun run check && bun run lint && bun test` — all pass
+- Smoke test ready; blocked on Docker Desktop running locally.
+
 ## 2026-07-13 — Fix CLI verify URL and complete verification flow
 
 ### Fixed

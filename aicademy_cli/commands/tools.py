@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable
+from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -16,28 +21,67 @@ console = Console()
 app = typer.Typer(help="Install and check required tools (kubectl, kind, docker)")
 
 # ─── Tool definitions ───────────────────────────────────────────────────────────
-TOOLS: dict[str, dict[str, str]] = {
+# Commands are now argv lists where possible to avoid shell injection.
+TOOLS: dict[str, dict[str, list[str] | str]] = {
     "kubectl": {
         "check": "kubectl version --client --output=yaml 2>/dev/null",
-        "windows": "winget install Kubernetes.kubectl",
-        "darwin": "brew install kubectl",
-        "linux": "curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/",  # noqa: E501
+        "windows": ["winget", "install", "Kubernetes.kubectl", "--accept-source-agreements", "--accept-package-agreements"],
+        "darwin": ["brew", "install", "kubectl"],
+        "linux": "__download_binary__",  # handled specially
     },
     "kind": {
         "check": "kind version",
-        "windows": "winget install Kubernetes.kind",
-        "darwin": "brew install kind",
-        "linux": "curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64 && chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind",  # noqa: E501
+        "windows": ["winget", "install", "Kubernetes.kind", "--accept-source-agreements", "--accept-package-agreements"],
+        "darwin": ["brew", "install", "kind"],
+        "linux": "__download_binary__",  # handled specially
     },
     "docker": {
         "check": "docker --version",
-        "windows": "winget install Docker.DockerDesktop",
-        "darwin": "brew install --cask docker",
-        "linux": "curl -fsSL https://get.docker.com | sh",
+        "windows": ["winget", "install", "Docker.DockerDesktop", "--accept-source-agreements", "--accept-package-agreements"],
+        "darwin": ["brew", "install", "--cask", "docker"],
+        "linux": "__docker_script__",  # handled specially
     },
 }
 
 ALL_TOOLS = list(TOOLS.keys())
+
+# Pinned, HTTPS-only download URLs for Linux binaries.
+_LINUX_DOWNLOADS: dict[str, dict[str, str]] = {
+    "kubectl": {
+        "url": "https://dl.k8s.io/release/v1.30.2/bin/linux/amd64/kubectl",
+        "sha256": "c6e9c45ce3f82c90663e3c30db3b27c167e8b19d83ed4048b61c1013f6a7c66e",
+        "dest": "/usr/local/bin/kubectl",
+    },
+    "kind": {
+        "url": "https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64",
+        "sha256": "1d86e3069ffbe3da9f1a918618aecbc778e00c75f838882d0dfa2d363bc4a68c",
+        "dest": "/usr/local/bin/kind",
+    },
+}
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download_to_temp(url: str) -> Path:
+    """Download ``url`` to a temporary file and return the path."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"Refusing to download from non-HTTPS URL: {url}")
+    resp = httpx.get(url, follow_redirects=True, timeout=60)
+    resp.raise_for_status()
+    suffix = Path(parsed.path).name or "download"
+    fd, tmp = tempfile.mkstemp(suffix=f"-{suffix}")
+    with os.fdopen(fd, "wb") as f:
+        f.write(resp.content)
+    return Path(tmp)
 
 
 def detect_os() -> str:
@@ -52,6 +96,53 @@ def detect_os() -> str:
 def is_installed(tool: str) -> bool:
     binary = tool.split()[0]
     return shutil.which(binary) is not None
+
+
+def _install_linux_binary(tool_name: str) -> bool:
+    """Download a pinned Linux binary to /usr/local/bin with checksum verification."""
+    spec = _LINUX_DOWNLOADS.get(tool_name)
+    if not spec:
+        console.print(f"[red]No Linux download spec for {tool_name}[/red]")
+        return False
+    tmp = _download_to_temp(spec["url"])
+    try:
+        actual_sha = _sha256_file(tmp)
+        expected_sha = spec["sha256"]
+        if actual_sha.lower() != expected_sha.lower():
+            console.print(
+                f"[red]✗ Checksum mismatch for {tool_name}: "
+                f"expected {expected_sha}, got {actual_sha}[/red]"
+            )
+            return False
+        tmp.chmod(0o755)
+        subprocess.run(["sudo", "mv", str(tmp), spec["dest"]], check=True)
+        console.print(f"[green]✔ {tool_name} installed to {spec['dest']}[/green]")
+        return True
+    except (subprocess.CalledProcessError, httpx.HTTPError, OSError) as exc:
+        console.print(f"[red]✗ Failed to install {tool_name}: {exc}[/red]")
+        return False
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _install_linux_docker() -> bool:
+    """Install Docker on Linux using the official get.docker.com script (no shell=True pipe)."""
+    try:
+        script = _download_to_temp("https://get.docker.com")
+        console.print("[dim]Running official Docker install script...[/dim]")
+        subprocess.run(["sh", str(script)], check=True)
+        return True
+    except (subprocess.CalledProcessError, httpx.HTTPError, OSError) as exc:
+        console.print(f"[red]✗ Failed to install docker: {exc}[/red]")
+        return False
+    finally:
+        try:
+            script.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _install_one_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
@@ -74,15 +165,16 @@ def _install_one_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
         return True
 
     console.print(f"\n[bold cyan]Installing {tool_name}...[/bold cyan]")
-    console.print(f"[dim]$ {install_cmd}[/dim]\n")
 
     try:
-        subprocess.run(
-            install_cmd,
-            shell=True,
-            check=True,
-            text=True,
-        )
+        if install_cmd == "__download_binary__":
+            return _install_linux_binary(tool_name)
+        if install_cmd == "__docker_script__":
+            return _install_linux_docker()
+
+        # install_cmd is an argv list (no shell=True).
+        console.print(f"[dim]$ {' '.join(install_cmd)}[/dim]\n")
+        subprocess.run(install_cmd, check=True)
         console.print(f"[green]✔ {tool_name} installed successfully.[/green]")
         return True
     except subprocess.CalledProcessError as exc:
@@ -110,7 +202,8 @@ def _check_tools(tools_to_process: Iterable[str]) -> None:
         installed = is_installed(t)
         status = "[green]✔ Installed[/green]" if installed else "[red]✗ Missing[/red]"
         cmd = TOOLS[t].get(os_type, "N/A")
-        table.add_row(t, status, f"[dim]{cmd}[/dim]")
+        display = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        table.add_row(t, status, f"[dim]{display}[/dim]")
     console.print(table)
 
 

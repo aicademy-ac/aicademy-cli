@@ -187,11 +187,13 @@ async def verify_session(
     verification_token: str,
     check_results: list[dict[str, Any]] | None,
     result: dict[str, Any],
+    signature: str,
 ) -> None:
     payload: dict[str, Any] = {
         "passed": result.get("passed"),
         "message": result.get("message", ""),
         "verificationToken": verification_token,
+        "signature": signature,
     }
     score = result.get("score")
     if score is not None:
@@ -206,3 +208,4 @@ async def verify_session(
         headers=_get_headers(),
         timeout=10,
     )
+

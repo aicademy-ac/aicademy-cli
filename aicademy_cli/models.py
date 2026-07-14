@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal, Union
 
+import re
+from pathlib import PurePosixPath
+
 from pydantic import BaseModel, field_validator
 from typing_extensions import TypeAlias
 
@@ -12,6 +15,23 @@ SHELL_METACHARACTERS = ("|", "&&", "||", ";", "`", "$(")
 HARDCODED_NODE_PATTERNS = ("kind-control-plane", "kind-worker", "aicademy-")
 
 Role = Literal["control-plane", "worker", "worker2", "worker3"]
+
+# Allowed absolute paths for ConfigFileAction inside KIND node containers.
+# These are system/service directories that practice scenarios legitimately modify.
+_ALLOWED_CONFIG_PATH_PREFIXES = (
+    "/etc/kubernetes/",
+    "/etc/containerd/",
+    "/etc/cni/",
+    "/etc/sysctl.d/",
+    "/etc/systemd/",
+    "/etc/ssl/certs/",
+    "/etc/pki/",
+    "/usr/local/bin/",
+    "/opt/",
+    "/var/lib/kubelet/",
+)
+
+_VALID_CLUSTER_TEMPLATES = {"1-node", "2-node", "3-node"}
 
 
 def _assert_safe_command(command: list[str]) -> list[str]:
@@ -83,6 +103,18 @@ class ConfigFileAction(BaseModel):
     path: str
     content: str
     mode: str | None = None
+
+    @field_validator("path", mode="after")
+    @classmethod
+    def safe_config_path(cls, v: str) -> str:
+        normalized = re.sub(r"/+", "/", v.strip())
+        if not normalized.startswith("/"):
+            raise ValueError(f"Config file path must be absolute: {v!r}")
+        if ".." in PurePosixPath(normalized).parts:
+            raise ValueError(f"Config file path must not contain '..' traversal: {v!r}")
+        if not any(normalized.startswith(prefix) for prefix in _ALLOWED_CONFIG_PATH_PREFIXES):
+            raise ValueError(f"Config file path is not in an allowed directory: {v!r}")
+        return normalized
 
 
 class ServiceAction(BaseModel):
@@ -344,11 +376,21 @@ class PracticeQuestion(BaseModel):
     breakers: list[ClusterAction] | None = None
     verifyChecks: list[VerifyCheck] | None = None
 
+    @field_validator("clusterTemplate", mode="after")
+    @classmethod
+    def known_cluster_template(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in _VALID_CLUSTER_TEMPLATES:
+            raise ValueError(f"Unknown cluster template {v!r}; must be one of {_VALID_CLUSTER_TEMPLATES}")
+        return v
+
 
 class StartSessionResponse(BaseModel):
     sessionId: str
     question: PracticeQuestion
     verificationToken: str
+    verificationSecret: str
     clusterName: str | None = None
     startedAt: str
     clusterState: ClusterState | None = None
