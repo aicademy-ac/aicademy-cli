@@ -58,7 +58,6 @@ class DockerClient:
                 workdir=workdir or None,
                 environment=environment,
                 demux=True,
-                timeout=timeout,
             )
         except docker.errors.DockerException as exc:
             raise DockerClientError(f"Docker exec failed in {role}: {exc}") from exc
