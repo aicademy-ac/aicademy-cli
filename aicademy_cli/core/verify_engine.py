@@ -34,6 +34,7 @@ _ALLOWED_BINARIES = {
     "journalctl",
     "kubectl",
     "kubeadm",
+    "openssl",
 }
 _BLOCKED_BINARIES = {"sh", "bash", "/bin/sh", "/bin/bash", "cmd", "powershell"}
 
@@ -139,6 +140,9 @@ def run_checks(
     batch_v1 = client.BatchV1Api()
     storage_v1 = client.StorageV1Api()
     policy_v1 = client.PolicyV1Api()
+    autoscaling_v2 = client.AutoscalingV2Api()
+    scheduling_v1 = client.SchedulingV1Api()
+    apiextensions_v1 = client.ApiextensionsV1Api()
 
     apis = {
         "core": core_v1,
@@ -148,6 +152,9 @@ def run_checks(
         "batch": batch_v1,
         "storage": storage_v1,
         "policy": policy_v1,
+        "autoscaling": autoscaling_v2,
+        "scheduling": scheduling_v1,
+        "apiextensions": apiextensions_v1,
     }
 
     ctx = CheckContext(apis, None, cluster_name)
@@ -236,6 +243,9 @@ EXISTENCE_CHECKS: dict[str, tuple[str, ExistenceMethod]] = {
     "cronjob_exists": ("batch", client.BatchV1Api.read_namespaced_cron_job),
     "storageclass_exists": ("storage", client.StorageV1Api.read_storage_class),
     "pdb_exists": ("policy", client.PolicyV1Api.read_namespaced_pod_disruption_budget),
+    "hpa_exists": ("autoscaling", client.AutoscalingV2Api.read_namespaced_horizontal_pod_autoscaler),
+    "priorityclass_exists": ("scheduling", client.SchedulingV1Api.read_priority_class),
+    "crd_exists": ("apiextensions", client.ApiextensionsV1Api.read_custom_resource_definition),
 }
 
 
@@ -353,12 +363,25 @@ def _check_node_label(check: dict[str, Any], ctx: CheckContext) -> tuple[bool, s
 @register_check("node_ready")
 def _check_node_ready(check: dict[str, Any], ctx: CheckContext) -> tuple[bool, str]:
     name = check.get("name")
-    node = ctx.apis["core"].read_node(name=name)
-    ready = any(
-        c.type == "Ready" and c.status == "True" for c in (node.status.conditions or [])
-    )
-    if not ready:
-        return False, f"Node {name} is not Ready"
+    label_selector = check.get("labelSelector")
+    
+    nodes_to_check = []
+    if name:
+        nodes_to_check.append(ctx.apis["core"].read_node(name=name))
+    elif label_selector:
+        nodes = ctx.apis["core"].list_node(label_selector=label_selector).items
+        if not nodes:
+            return False, f"No nodes found matching selector: {label_selector}"
+        nodes_to_check.extend(nodes)
+    else:
+        return False, "Either 'name' or 'labelSelector' must be provided for node_ready check"
+        
+    for node in nodes_to_check:
+        ready = any(
+            c.type == "Ready" and c.status == "True" for c in (node.status.conditions or [])
+        )
+        if not ready:
+            return False, f"Node {node.metadata.name} is not Ready"
     return True, ""
 
 
@@ -489,6 +512,12 @@ def _read_generic_resource(
         return apis["storage"].read_storage_class(name=name)
     if kind == "poddisruptionbudget":
         return apis["policy"].read_namespaced_pod_disruption_budget(name=name, namespace=namespace)
+    if kind == "hpa" or kind == "horizontalpodautoscaler":
+        return apis["autoscaling"].read_namespaced_horizontal_pod_autoscaler(name=name, namespace=namespace)
+    if kind == "priorityclass":
+        return apis["scheduling"].read_priority_class(name=name)
+    if kind == "crd" or kind == "customresourcedefinition":
+        return apis["apiextensions"].read_custom_resource_definition(name=name)
     raise ValueError(f"Unsupported generic resource kind: {kind}")
 
 
