@@ -433,7 +433,9 @@ def _check_container_exec(check: dict[str, Any], ctx: CheckContext) -> tuple[boo
     stderr_text = (stderr or b"").decode("utf-8", errors="replace")
     output = stdout_text + stderr_text
 
-    expected_exit = check.get("expectedExitCode", 0)
+    expected_exit = check.get("expectedExitCode")
+    if expected_exit is None:
+        expected_exit = 0
     if exit_code != expected_exit:
         return False, f"Expected exit {expected_exit}, got {exit_code}: {output}"
 

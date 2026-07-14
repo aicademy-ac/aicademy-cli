@@ -25,15 +25,17 @@ def _sign_verification_result(
     score: int | None,
     check_results: list[dict[str, Any]],
 ) -> str:
-    """Compute an HMAC-SHA256 signature over the verification result payload."""
+    payload: dict[str, Any] = {
+        "sessionId": session_id,
+        "questionId": question_id,
+        "passed": passed,
+        "checkResults": check_results,
+    }
+    if score is not None:
+        payload["score"] = score
+
     canonical = json.dumps(
-        {
-            "sessionId": session_id,
-            "questionId": question_id,
-            "passed": passed,
-            "score": score,
-            "checkResults": check_results,
-        },
+        payload,
         sort_keys=True,
         separators=(",", ":"),
     )

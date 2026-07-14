@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **CLI verification signature mismatch**: omitted `score` field when `None` to align canonical payload between CLI and API server, fixing "Invalid verification signature" errors.
+- **CLI verification check exit code**: fixed `container_exec` checks incorrectly failing when `expectedExitCode` was implicitly or explicitly `null` (now defaults to 0).
 - **`.env` handling corrected**: ensured `.env` files are gitignored in both repos and added CI checks to prevent accidental commits. Local `.env` files are acceptable for development; production secrets are injected via Cloudflare Workers secrets / GitHub Actions secrets.
 - **CLI loaded untrusted `.env` from current working directory**: removed `load_dotenv()` from `aicademy_cli/config.py`. A malicious `.env` can no longer redirect API traffic or harvest tokens.
 - **CLI accepted insecure HTTP API URLs**: `API_BASE_URL` now rejects non-HTTPS URLs unless the host is `localhost` or `127.0.0.1`.
