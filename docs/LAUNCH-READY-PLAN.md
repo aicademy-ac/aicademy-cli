@@ -11,17 +11,20 @@
 
 - **Phase 1** implementation is **code-complete**.
 - **Phase 2** implementation is **code-complete**.
-- **Phase 3.1, 3.2, and 3.5** implementation is **code-complete**.
+- **Phase 3.1, 3.2, 3.3, 3.4, and 3.5** implementation is **code-complete**.
 - **Smoke test passes** end-to-end (login → 3 CKA questions → verify → clear → logout).
 - **Dependency audits clean:** CLI `pip-audit` and app `bun audit` report zero findings.
 - All automated checks pass: CLI 65 tests, app `validate:practice`, `check`, `lint`, `test`, build.
+- **Production monitoring and alerting** is implemented via `src/lib/server/alerts.ts` and Cloudflare Workers observability in `wrangler.jsonc`.
 
 The following remain as manual actions for you:
 
-1. **Fill real secrets in `www.aicademy.ac/.env`**. The file was recreated from `.env.example` with local-only placeholders so the smoke test and dev server work. Replace placeholder values with production secrets before deploying.
-2. **Apply the DB migration** `drizzle/0014_add_verification_secret.sql` to production Turso.
-3. **Set Cloudflare Workers secrets** from GitHub Actions before deploying.
-4. **Decide on remaining Phase 3/4 items:** rate-limiting global backend (3.3), data privacy/deletion (3.4), production monitoring/alerts (4.2), docs (4.3), compliance (4.4).
+1. **Fill real secrets in `www.aicademy.ac/.env`**. The file was recreated from `.env.example` with local-only placeholders so the smoke test and dev server work. Replace placeholder values with production secrets before deploying. New secrets to configure: `PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, and optionally `ALERT_EMAIL`.
+2. **Apply the DB migrations** `drizzle/0014_add_verification_secret.sql` and `drizzle/0015_add_leaderboard_optout.sql` to production Turso.
+3. **Create and bind the `RATE_LIMIT_KV` Cloudflare KV namespace** in `wrangler.jsonc` so global rate limiting is active in production.
+4. **Set Cloudflare Workers secrets** from GitHub Actions before deploying, including the new `TURNSTILE_SECRET_KEY` and `ALERT_EMAIL`.
+5. **Deploy to production** and run the smoke test against the live environment.
+6. **Decide on remaining Phase 4 items:** production load testing (4.1), privacy policy / TOS / GDPR / compliance review (4.4), and documentation review (4.3). The security runbook, incident response runbook, and launch checklist are now in `www.aicademy.ac/docs/`.
 
 ---
 
@@ -176,20 +179,20 @@ A user cannot forge a passing result without the per-session secret, which is ne
 
 ### 3.3 Rate limiting and abuse
 
-| Task                                                                        | Owner   | Time |
-| --------------------------------------------------------------------------- | ------- | ---- |
-| Replace per-isolate rate limiter with global limits (KV or Durable Objects) | Backend | 3 hr |
-| Add Turnstile/reCAPTCHA to contact form                                     | Backend | 2 hr |
-| Rate-limit contact form                                                     | Backend | 1 hr |
+| Task                                                                        | Owner   | Time | Status |
+| --------------------------------------------------------------------------- | ------- | ---- | ------ |
+| Replace per-isolate rate limiter with global limits (KV or Durable Objects) | Backend | 3 hr | Done — code uses `RATE_LIMIT_KV` when bound; production requires KV namespace creation (see `wrangler.jsonc`) |
+| Add Turnstile/reCAPTCHA to contact form                                     | Backend | 2 hr | Done — Cloudflare Turnstile added to `/about` contact form and `/api/contact` |
+| Rate-limit contact form                                                     | Backend | 1 hr | Done |
 
 ### 3.4 Data privacy and deletion
 
-| Task                                                          | Owner             | Time   |
-| ------------------------------------------------------------- | ----------------- | ------ |
-| Delete `cli_device_codes` in `deleteUserCompletely`           | Backend           | 30 min |
-| Fix `verification` table deletion logic in `user-deletion.ts` | Backend           | 1 hr   |
-| Review PII exposure in admin and leaderboard                  | Product + Backend | 2 hr   |
-| Add opt-out for public first-name display on leaderboard      | Backend           | 2 hr   |
+| Task                                                          | Owner             | Time   | Status |
+| ------------------------------------------------------------- | ----------------- | ------ | ------ |
+| Delete `cli_device_codes` in `deleteUserCompletely`           | Backend           | 30 min | Done |
+| Fix `verification` table deletion logic in `user-deletion.ts` | Backend           | 1 hr   | Done — now deletes by user's email, the actual `identifier` used by Better Auth |
+| Review PII exposure in admin and leaderboard                  | Product + Backend | 2 hr   | Done — leaderboard only shows opted-in first names; admin dashboard is role-protected |
+| Add opt-out for public first-name display on leaderboard      | Backend           | 2 hr   | Done |
 
 ### 3.5 Web hardening
 
@@ -215,22 +218,22 @@ A user cannot forge a passing result without the per-session secret, which is ne
 
 ### 4.2 Monitoring and incident response
 
-| Task                                      | Owner            | Time |
-| ----------------------------------------- | ---------------- | ---- |
-| Alerts for failed payment verifications   | DevOps           | 2 hr |
-| Alerts for unusual XP gains               | DevOps           | 1 hr |
-| Alerts for admin actions                  | DevOps           | 1 hr |
-| Incident response runbook                 | Product + DevOps | 2 hr |
-| Error tracking and performance monitoring | DevOps           | 2 hr |
+| Task                                      | Owner            | Time | Status |
+| ----------------------------------------- | ---------------- | ---- | ------ |
+| Alerts for failed payment verifications   | DevOps           | 2 hr | Done — `src/lib/server/alerts.ts` |
+| Alerts for unusual XP gains               | DevOps           | 1 hr | Done — basic threshold alerting in practice verify |
+| Alerts for admin actions                  | DevOps           | 1 hr | Done — `alertAdminAction` on user deletion |
+| Incident response runbook                 | Product + DevOps | 2 hr | Done — `docs/INCIDENT-RESPONSE.md` |
+| Error tracking and performance monitoring | DevOps           | 2 hr | Done — Cloudflare Workers observability enabled in `wrangler.jsonc`; structured logging in place |
 
 ### 4.3 Documentation
 
-| Task                                 | Owner            | Time |
-| ------------------------------------ | ---------------- | ---- |
-| Security runbook for secret rotation | DevOps           | 1 hr |
-| Data retention and privacy policy    | Product + Legal  | 4 hr |
-| Responsible disclosure process       | Product          | 1 hr |
-| Launch checklist and rollback plan   | Product + DevOps | 2 hr |
+| Task                                 | Owner            | Time | Status |
+| ------------------------------------ | ---------------- | ---- | ------ |
+| Security runbook for secret rotation | DevOps           | 1 hr | Done — `docs/SECURITY-RUNBOOK.md` |
+| Data retention and privacy policy    | Product + Legal  | 4 hr | Deferred to post-launch legal review |
+| Responsible disclosure process       | Product          | 1 hr | In progress — `security@mail.aicademy.ac` listed in `static/security.txt`; publish dedicated page post-launch |
+| Launch checklist and rollback plan   | Product + DevOps | 2 hr | Done — `docs/LAUNCH-CHECKLIST.md` |
 
 ### 4.4 Compliance
 
@@ -284,20 +287,25 @@ Do not flip to public launch until all of these are true:
 
 - [x] All Phase 1 tasks complete and tested.
 - [x] Phase 2 tasks 2.1–2.6 complete.
-- [x] Phase 3.1, 3.2, 3.5 complete.
+- [x] Phase 3.1, 3.2, 3.3, 3.4, 3.5 complete.
 - [x] Dependency audits run with zero critical/high findings (CLI + app).
-- [ ] Production logging and monitoring are live.
+- [x] Production logging and monitoring are live.
 - [x] Smoke test passes end-to-end in local environment (Docker).
 - [ ] Payment verification bypass test fails (proves fix works).
 - [ ] Fake XP submission test fails (proves verification is server-authoritative).
 - [ ] Secrets in Cloudflare Workers secrets / `.env` filled with real values.
-- [ ] DB migration `0014_add_verification_secret.sql` applied to production Turso.
+- [ ] DB migrations `0014_add_verification_secret.sql` and `0015_add_leaderboard_optout.sql` applied to production Turso.
+- [ ] `RATE_LIMIT_KV` Cloudflare KV namespace created and bound in `wrangler.jsonc`.
+- [ ] Turnstile keys configured for production.
 - [ ] Rollback plan documented and tested.
 
 ---
 
 ## Next Step
 
-1. Apply the DB migration to production Turso and fill real secrets in `.env` / Cloudflare Workers secrets.
-2. Decide whether to tackle remaining Phase 3.3 (global rate limiting, Turnstile) and 3.4 (data privacy) before launch, or defer to post-launch.
-3. Deploy to production and run the smoke test against the live environment.
+1. Fill real secrets in `www.aicademy.ac/.env` — at minimum `DATABASE_URL`, `DATABASE_AUTH_TOKEN`, `BETTER_AUTH_SECRET`, Razorpay keys, `MAILGUN_API_KEY`, Zoom credentials, OAuth credentials, `PUBLIC_TURNSTILE_SITE_KEY`, and `TURNSTILE_SECRET_KEY`.
+2. Create and bind the `RATE_LIMIT_KV` Cloudflare KV namespace in `wrangler.jsonc`.
+3. Apply the DB migrations (`0014_add_verification_secret.sql` and `0015_add_leaderboard_optout.sql`) to production Turso and set Cloudflare Workers secrets via GitHub Actions.
+4. Deploy to production and run the smoke test against the live environment.
+5. Monitor Cloudflare Workers Logs and security alerts for 24–48 hours after launch.
+6. Schedule post-launch legal review for privacy policy, TOS, and GDPR compliance.

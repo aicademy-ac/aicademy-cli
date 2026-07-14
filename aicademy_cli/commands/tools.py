@@ -25,19 +25,37 @@ app = typer.Typer(help="Install and check required tools (kubectl, kind, docker)
 TOOLS: dict[str, dict[str, list[str] | str]] = {
     "kubectl": {
         "check": "kubectl version --client --output=yaml 2>/dev/null",
-        "windows": ["winget", "install", "Kubernetes.kubectl", "--accept-source-agreements", "--accept-package-agreements"],
+        "windows": [
+            "winget",
+            "install",
+            "Kubernetes.kubectl",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ],
         "darwin": ["brew", "install", "kubectl"],
         "linux": "__download_binary__",  # handled specially
     },
     "kind": {
         "check": "kind version",
-        "windows": ["winget", "install", "Kubernetes.kind", "--accept-source-agreements", "--accept-package-agreements"],
+        "windows": [
+            "winget",
+            "install",
+            "Kubernetes.kind",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ],
         "darwin": ["brew", "install", "kind"],
         "linux": "__download_binary__",  # handled specially
     },
     "docker": {
         "check": "docker --version",
-        "windows": ["winget", "install", "Docker.DockerDesktop", "--accept-source-agreements", "--accept-package-agreements"],
+        "windows": [
+            "winget",
+            "install",
+            "Docker.DockerDesktop",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ],
         "darwin": ["brew", "install", "--cask", "docker"],
         "linux": "__docker_script__",  # handled specially
     },

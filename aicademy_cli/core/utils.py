@@ -148,7 +148,9 @@ def format_access_error(e: Exception) -> None:
     message = _sanitize_error_message(str(raw_message))
 
     if code == "UPGRADE_REQUIRED":
-        benefits = "\n".join(f"  ✦ {_sanitize_error_message(str(b))}" for b in err.get("benefits", []))
+        benefits = "\n".join(
+            f"  ✦ {_sanitize_error_message(str(b))}" for b in err.get("benefits", [])
+        )
         upgrade_url = _sanitize_error_message(
             str(err.get("upgradeUrl", "https://aicademy.ac/practice#pricing"))
         )

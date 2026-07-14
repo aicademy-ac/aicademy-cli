@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Union
-
 import re
 from pathlib import PurePosixPath
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, field_validator
 from typing_extensions import TypeAlias
@@ -382,7 +381,9 @@ class PracticeQuestion(BaseModel):
         if v is None:
             return v
         if v not in _VALID_CLUSTER_TEMPLATES:
-            raise ValueError(f"Unknown cluster template {v!r}; must be one of {_VALID_CLUSTER_TEMPLATES}")
+            raise ValueError(
+                f"Unknown cluster template {v!r}; must be one of {_VALID_CLUSTER_TEMPLATES}"
+            )
         return v
 
 

@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-14 — Phase 3/4 Completion (Launch Readiness)
+
+### Added
+
+- Cloudflare Turnstile bot protection on the contact form (`/about` + `/api/contact`).
+- Production security alerting utility (`src/lib/server/alerts.ts`) for failed payment verifications, admin actions, abuse attempts, and unusual XP gains.
+- Security runbook (`docs/SECURITY-RUNBOOK.md`), incident response runbook (`docs/INCIDENT-RESPONSE.md`), and launch checklist (`docs/LAUNCH-CHECKLIST.md`).
+- Runtime warning when `RATE_LIMIT_KV` is missing in production.
+- `PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, and `ALERT_EMAIL` to environment and deploy workflow.
+
+### Fixed
+
+- `deleteUserCompletely` now deletes Better Auth `verification` records by the user's email (the actual `identifier` value), not by `userId`.
+
+### Fixed (CLI lint)
+
+- Resolved pre-existing `ruff` E501 line-too-long and I001 import-order issues in `aicademy_cli/commands/tools.py`, `aicademy_cli/core/utils.py`, and `aicademy_cli/models.py`.
+
+### Files touched
+
+- `src/lib/server/user-deletion.ts` — fixed verification deletion logic.
+- `src/lib/server/turnstile.ts` — new Turnstile verification helper.
+- `src/lib/components/Turnstile.svelte` — new Turnstile widget.
+- `src/routes/api/contact/+server.ts` — Turnstile token verification.
+- `src/routes/(marketing)/about/+page.svelte` — Turnstile widget on contact form.
+- `src/lib/server/alerts.ts` — new security alerting utility.
+- `src/lib/server/mail.ts` — exported `sendMail`, added `sendAlertEmail`.
+- `src/routes/api/payment/verify/+server.ts` — alerts on verification failures.
+- `src/routes/api/admin/delete-user/+server.ts` — alerts on admin deletion.
+- `src/routes/api/practice/sessions/[id]/verify/+server.ts` — alerts on unusual XP gains.
+- `src/hooks.server.ts` — alerts on invalid origin / rate-limit global missing.
+- `wrangler.jsonc`, `.env.example`, `.env`, `.github/workflows/deploy.yml` — Turnstile, alert email, and KV instructions.
+- `docs/SECURITY-RUNBOOK.md`, `docs/INCIDENT-RESPONSE.md`, `docs/LAUNCH-CHECKLIST.md` — new documentation.
+- `docs/LAUNCH-READY-PLAN.md` — updated status and next steps.
+
 ## 2026-07-14 — Phase 1 Security Hardening (Launch Blockers)
 
 ### Fixed
