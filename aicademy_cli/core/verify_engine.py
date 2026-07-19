@@ -496,6 +496,10 @@ def _read_generic_resource(
         return apis["batch"].read_namespaced_job(name=name, namespace=namespace)
     if kind == "cronjob":
         return apis["batch"].read_namespaced_cron_job(name=name, namespace=namespace)
+    if kind == "persistentvolume":
+        return apis["core"].read_persistent_volume(name=name)
+    if kind == "persistentvolumeclaim":
+        return apis["core"].read_namespaced_persistent_volume_claim(name=name, namespace=namespace)
     if kind == "networkpolicy":
         return apis["net"].read_namespaced_network_policy(name=name, namespace=namespace)
     if kind == "ingress":
