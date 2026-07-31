@@ -63,3 +63,39 @@ async def test_abandon_session_patches_session_endpoint(temp_config: Path) -> No
     await api.abandon_session("sess-123")
 
     assert route.called
+
+
+def test_sign_verification_result_canonical_format() -> None:
+    """Verify that _sign_verification_result omits score when score is None."""
+    import hashlib
+    import hmac
+    import json
+    from aicademy_cli.commands.verify import _sign_verification_result
+
+    secret = "test-secret"
+    session_id = "sess-123"
+    question_id = "cka-01"
+    check_results = [{"message": "", "name": "check-1", "passed": True}]
+
+    # When score is None, payload MUST NOT include "score" key
+    expected_payload = {
+        "checkResults": check_results,
+        "passed": True,
+        "questionId": question_id,
+        "sessionId": session_id,
+    }
+    canonical = json.dumps(expected_payload, sort_keys=True, separators=(",", ":"))
+    expected_sig = hmac.new(
+        secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+    sig = _sign_verification_result(
+        secret=secret,
+        session_id=session_id,
+        question_id=question_id,
+        passed=True,
+        score=None,
+        check_results=check_results,
+    )
+    assert sig == expected_sig
+
