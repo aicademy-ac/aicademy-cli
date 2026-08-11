@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from aicademy_cli.core import question_browser
 
@@ -23,11 +25,12 @@ def test_status_glyph_no_entry() -> None:
     assert question_browser._status_glyph(None) == "·"
 
 
-def test_pick_category_returns_selected_value() -> None:
+@pytest.mark.asyncio
+async def test_pick_category_returns_selected_value() -> None:
     fake_question = MagicMock()
-    fake_question.ask.return_value = "cka"
+    fake_question.ask_async = AsyncMock(return_value="cka")
     with patch("questionary.select", return_value=fake_question) as fake_select:
-        result = question_browser.pick_category()
+        result = await question_browser.pick_category()
 
     assert result == "cka"
     fake_select.assert_called_once()
@@ -36,34 +39,38 @@ def test_pick_category_returns_selected_value() -> None:
     assert len(choices) == 4
 
 
-def test_pick_category_all_categories_choice_resolves_to_none() -> None:
+@pytest.mark.asyncio
+async def test_pick_category_all_categories_choice_resolves_to_none() -> None:
     """Regression test: questionary.Choice(value=None) doesn't actually
     keep the value as None -- it silently falls back to using the title as
     the value. Picking "All categories" must still resolve to None, not
     the literal string "All categories" (which would wrongly filter)."""
     fake_question = MagicMock()
-    fake_question.ask.return_value = question_browser._ALL_CATEGORIES_SENTINEL
+    fake_question.ask_async = AsyncMock(return_value=question_browser._ALL_CATEGORIES_SENTINEL)
     with patch("questionary.select", return_value=fake_question):
-        result = question_browser.pick_category()
+        result = await question_browser.pick_category()
 
     assert result is None
 
 
-def test_pick_category_cancelled_returns_none() -> None:
+@pytest.mark.asyncio
+async def test_pick_category_cancelled_returns_none() -> None:
     fake_question = MagicMock()
-    fake_question.ask.return_value = None
+    fake_question.ask_async = AsyncMock(return_value=None)
     with patch("questionary.select", return_value=fake_question):
-        result = question_browser.pick_category()
+        result = await question_browser.pick_category()
 
     assert result is None
 
 
-def test_pick_question_returns_none_for_empty_list() -> None:
-    result = question_browser.pick_question([], {})
+@pytest.mark.asyncio
+async def test_pick_question_returns_none_for_empty_list() -> None:
+    result = await question_browser.pick_question([], {})
     assert result is None
 
 
-def test_pick_question_builds_one_choice_per_question() -> None:
+@pytest.mark.asyncio
+async def test_pick_question_builds_one_choice_per_question() -> None:
     questions = [
         {"id": "cka-01", "title": "Fix the pod", "level": "beginner"},
         {"id": "cka-02", "title": "Scale a deployment", "level": "intermediate"},
@@ -71,9 +78,9 @@ def test_pick_question_builds_one_choice_per_question() -> None:
     progress = {"cka-01": {"passed": True}}
 
     fake_question = MagicMock()
-    fake_question.ask.return_value = "cka-02"
+    fake_question.ask_async = AsyncMock(return_value="cka-02")
     with patch("questionary.select", return_value=fake_question) as fake_select:
-        result = question_browser.pick_question(questions, progress)
+        result = await question_browser.pick_question(questions, progress)
 
     assert result == "cka-02"
     choices = fake_select.call_args.kwargs["choices"]
@@ -85,10 +92,11 @@ def test_pick_question_builds_one_choice_per_question() -> None:
     assert fake_select.call_args.kwargs["use_search_filter"] is True
 
 
-def test_pick_question_cancelled_returns_none() -> None:
+@pytest.mark.asyncio
+async def test_pick_question_cancelled_returns_none() -> None:
     fake_question = MagicMock()
-    fake_question.ask.return_value = None
+    fake_question.ask_async = AsyncMock(return_value=None)
     with patch("questionary.select", return_value=fake_question):
-        result = question_browser.pick_question([{"id": "cka-01"}], {})
+        result = await question_browser.pick_question([{"id": "cka-01"}], {})
 
     assert result is None

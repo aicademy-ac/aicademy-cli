@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -44,6 +45,11 @@ API_BASE_URL = _get_api_base_url()
 CONFIG_DIR = Path.home() / ".aicademy"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 KUBECONFIG_PATH = CONFIG_DIR / "kubeconfig-aicademy-session"
+
+# A practice session left "active" (cluster running, server-side session
+# open) for longer than this is treated as abandoned and cleaned up the
+# next time the CLI looks at it.
+SESSION_MAX_AGE_HOURS = 24
 
 
 
@@ -256,6 +262,27 @@ def set_active_session(session: dict[str, Any] | None) -> None:
     else:
         cfg["active_session"] = session
     save_config(cfg)
+
+
+def is_session_expired(session: dict[str, Any]) -> bool:
+    """Whether `session` has been active longer than SESSION_MAX_AGE_HOURS.
+
+    Sessions with no `startedAt` (cached by an older CLI version, before
+    this field was stored locally) are treated as not expired -- there's no
+    data to judge them by, so upgrading the CLI shouldn't silently wipe
+    someone's in-progress environment.
+    """
+    started_at = session.get("startedAt")
+    if not started_at:
+        return False
+    try:
+        started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - started
+    return age.total_seconds() > SESSION_MAX_AGE_HOURS * 3600
 
 
 def get_user_config() -> dict[str, Any]:

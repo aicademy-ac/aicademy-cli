@@ -220,7 +220,7 @@ async def _pick_question_interactively(category: str | None, level: str | None) 
 
     if category is None:
         console.print()
-        category = question_browser.pick_category()
+        category = await question_browser.pick_category()
 
     if category:
         questions = [q for q in questions if q.get("category") == category]
@@ -236,7 +236,7 @@ async def _pick_question_interactively(category: str | None, level: str | None) 
     except api.APIError:
         progress = {}
 
-    return question_browser.pick_question(questions, progress)
+    return await question_browser.pick_question(questions, progress)
 
 
 async def _start_async(
@@ -289,6 +289,7 @@ async def _start_async(
             "category": question.category,
             "verificationToken": data.verificationToken,
             "verificationSecret": data.verificationSecret,
+            "startedAt": data.startedAt,
         }
     )
 
@@ -467,7 +468,7 @@ def instructions(
 async def _instructions_async(question_id: str | None, web: bool) -> None:
     utils.require_auth()
 
-    session = config.get_active_session()
+    session = await _get_active_session_or_expire()
     if not session and not question_id:
         console.print(
             "[red]✗ No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
@@ -490,7 +491,7 @@ async def _instructions_async(question_id: str | None, web: bool) -> None:
         webbrowser.open(url)
         raise typer.Exit()
 
-    session_data = config.get_active_session() or {}
+    session_data = session or {}
     cat = session_data.get("category", qid.split("-")[0] if qid else "")
 
     try:
@@ -523,7 +524,7 @@ async def _break_async(question_id: str | None) -> None:
 
     utils.require_auth()
 
-    session = config.get_active_session()
+    session = await _get_active_session_or_expire()
     if not session and not question_id:
         console.print(
             "[red]✗ No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
@@ -590,15 +591,59 @@ def clear(
     asyncio.run(_clear_async(question_id, verbose))
 
 
-async def _clear_async(question_id: str | None, verbose: bool) -> None:
+async def _teardown_cluster(
+    cluster_name: str | None, session_id: str | None, verbose: bool = False
+) -> None:
+    """Delete a KIND cluster and abandon its server-side session.
+
+    Shared by `clear`, the post-verify "next question" flow, session-expiry
+    cleanup, and `restart` -- every path that needs to tear down exactly one
+    known cluster (never a wildcard) before moving on.
+    """
     from ..core import kind  # deferred import — see module docstring
 
+    if cluster_name and utils.is_valid_cluster_name(cluster_name):
+        kind.delete_cluster(cluster_name, verbose=verbose)
+
+    if session_id:
+        try:
+            await api.abandon_session(session_id)
+        except api.APIError as e:
+            console.print(
+                "[dim yellow]⚠ Could not sync abandoned session to server: "
+                f"{e.response_data}[/dim yellow]"
+            )
+
+
+async def _get_active_session_or_expire(verbose: bool = False) -> dict[str, Any] | None:
+    """Read the locally-cached active session, auto-cleaning it up first if
+    it's been active longer than config.SESSION_MAX_AGE_HOURS.
+
+    Called everywhere the CLI reads the active session, so a stale session
+    never sits "in progress" forever -- the next command the user happens
+    to run notices and tears it down. There's no background process; the
+    check is opportunistic (lazy), which is the norm for a CLI tool.
+    """
+    session = config.get_active_session()
+    if session and config.is_session_expired(session):
+        qid = session.get("questionId", "unknown")
+        console.print(
+            f"[yellow]⚠ Your session for [bold]{qid}[/bold] expired after "
+            f"{config.SESSION_MAX_AGE_HOURS}h of inactivity and was cleaned up.[/yellow]"
+        )
+        await _teardown_cluster(session.get("clusterName"), session.get("sessionId"), verbose)
+        config.set_active_session(None)
+        return None
+    return session
+
+
+async def _clear_async(question_id: str | None, verbose: bool) -> None:
     if verbose:
         state.set_verbose(True)
     utils.require_auth()
 
     qid = utils.normalize_question_id(question_id)
-    session = config.get_active_session()
+    session = await _get_active_session_or_expire(verbose)
     if not session and not qid:
         console.print("[yellow]No active session found.[/yellow]")
         raise typer.Exit()
@@ -609,18 +654,7 @@ async def _clear_async(question_id: str | None, verbose: bool) -> None:
         console.print("[red]✗ Invalid cluster name.[/red]")
         raise typer.Exit(1)
 
-    # Delete KIND cluster
-    kind.delete_cluster(cluster_name, verbose=verbose)
-
-    # Mark session as abandoned via API
-    if session_id:
-        try:
-            await api.abandon_session(session_id)
-        except api.APIError as e:
-            console.print(
-                "[dim yellow]⚠ Could not sync abandoned session to server: "
-                f"{e.response_data}[/dim yellow]"
-            )
+    await _teardown_cluster(cluster_name, session_id, verbose)
 
     config.set_active_session(None)
     print_block(
@@ -629,3 +663,51 @@ async def _clear_async(question_id: str | None, verbose: bool) -> None:
         "You can now start a new question with:\n[bold]aicademy start <question-id>[/bold]",
         style="green",
     )
+
+
+@app.command()
+def restart(
+    question_id: str | None = typer.Argument(
+        None, help="Question ID (auto-detected from active session)"
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full command output"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+) -> None:
+    """Wipe the current practice environment and start the same question fresh.
+
+    Equivalent to `clear` followed by `start <id>`, in one step -- for when
+    you've messed up an environment and want a clean slate without hunting
+    down the question ID again.
+    """
+    asyncio.run(_restart_async(question_id, verbose, yes))
+
+
+async def _restart_async(question_id: str | None, verbose: bool, yes: bool) -> None:
+    if verbose:
+        state.set_verbose(True)
+    utils.require_auth()
+
+    session = await _get_active_session_or_expire(verbose)
+    qid = utils.normalize_question_id(question_id) or (
+        session.get("questionId") if session else None
+    )
+    if not qid:
+        console.print(
+            "[red]✗ No active session and no question ID given.[/red]\n"
+            "Usage: [bold]aicademy question restart <question-id>[/bold]"
+        )
+        raise typer.Exit(1)
+
+    # Only tear down an existing environment if it's for the same question
+    # being restarted -- a session for a *different* question is left alone
+    # (that's what `clear`/the SESSION_ACTIVE prompt in `start` are for).
+    if session and session.get("questionId") == qid:
+        if not yes and not typer.confirm(
+            f"This wipes the current environment for '{qid}'. Continue?", default=True
+        ):
+            raise typer.Exit()
+        console.print(f"[cyan]Restarting question [white]{qid}[/white]...[/cyan]")
+        await _teardown_cluster(session.get("clusterName"), session.get("sessionId"), verbose)
+        config.set_active_session(None)
+
+    await _start_async(qid, verbose)

@@ -32,7 +32,7 @@ def _status_glyph(entry: dict[str, Any] | None) -> str:
 _ALL_CATEGORIES_SENTINEL = "__all__"
 
 
-def pick_category() -> str | None:
+async def pick_category() -> str | None:
     """Prompt for a category. Returns a slug (cka/ckad/cks), or None for
     "all categories" -- also None if the user cancels (Ctrl+C/Esc), which
     callers should treat the same as "no filter" rather than an error."""
@@ -44,11 +44,15 @@ def pick_category() -> str | None:
     # A real sentinel avoids that, converted back to None below.
     choices = [questionary.Choice(title=label, value=slug) for slug, label in _CATEGORY_CHOICES]
     choices.append(questionary.Choice(title="All categories", value=_ALL_CATEGORIES_SENTINEL))
-    result = questionary.select("Which exam?", choices=choices).ask()
+    # .ask_async() (not .ask()) -- this runs inside a CLI command already
+    # driven by asyncio.run(), and .ask() internally calls asyncio.run()
+    # itself, which blows up with "cannot be called from a running event
+    # loop". .ask_async() awaits on the existing loop instead.
+    result = await questionary.select("Which exam?", choices=choices).ask_async()
     return None if result in (None, _ALL_CATEGORIES_SENTINEL) else result
 
 
-def pick_question(
+async def pick_question(
     questions: list[dict[str, Any]],
     progress: dict[str, Any],
     message: str = "Pick a question (type to search, ↑/↓ to move, Enter to select):",
@@ -72,4 +76,4 @@ def pick_question(
         choices.append(questionary.Choice(title=title, value=qid))
     if not choices:
         return None
-    return questionary.select(message, choices=choices, use_search_filter=True).ask()
+    return await questionary.select(message, choices=choices, use_search_filter=True).ask_async()

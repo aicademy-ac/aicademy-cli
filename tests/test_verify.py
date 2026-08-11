@@ -113,18 +113,26 @@ def test_prompt_next_step_maps_input(user_input: str, expected: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_next_question_launches_next_accessible_question() -> None:
+async def test_start_next_question_tears_down_previous_cluster_before_starting() -> None:
+    """Regression test: picking [n]ext used to leave the just-finished
+    question's KIND cluster running while a second one was created. The old
+    cluster (and only the old cluster, by its exact recorded name) must be
+    torn down first."""
     fake_get_next = AsyncMock(
         return_value={"nextQuestion": {"id": "cka-02", "title": "Next one"}}
     )
     fake_start = AsyncMock()
+    fake_teardown = AsyncMock()
+    active_session = {"clusterName": "aicademy-cka-01", "sessionId": "sess-1"}
     with (
         patch.object(verify_module.api, "get_next_question", fake_get_next),
         patch("aicademy_cli.commands.question._start_async", fake_start),
+        patch("aicademy_cli.commands.question._teardown_cluster", fake_teardown),
     ):
-        await _start_next_question("cka-01")
+        await _start_next_question("cka-01", active_session)
 
     fake_get_next.assert_awaited_once_with("cka-01")
+    fake_teardown.assert_awaited_once_with("aicademy-cka-01", "sess-1")
     fake_start.assert_awaited_once_with("cka-02", verbose=False)
 
 
@@ -139,7 +147,7 @@ async def test_start_next_question_shows_upgrade_notice_when_locked() -> None:
         }
     )
     with patch.object(verify_module.api, "get_next_question", fake_get_next):
-        await _start_next_question("cka-01")  # must not raise
+        await _start_next_question("cka-01", {})  # must not raise
 
 
 @pytest.mark.asyncio
@@ -148,11 +156,11 @@ async def test_start_next_question_shows_all_done_when_exhausted() -> None:
         return_value={"nextQuestion": None, "code": "ALL_COMPLETED", "message": "Nice work!"}
     )
     with patch.object(verify_module.api, "get_next_question", fake_get_next):
-        await _start_next_question("cka-01")  # must not raise
+        await _start_next_question("cka-01", {})  # must not raise
 
 
 @pytest.mark.asyncio
 async def test_start_next_question_handles_api_error_gracefully() -> None:
     fake_get_next = AsyncMock(side_effect=verify_module.api.APIError("boom", 500))
     with patch.object(verify_module.api, "get_next_question", fake_get_next):
-        await _start_next_question("cka-01")  # must not raise
+        await _start_next_question("cka-01", {})  # must not raise

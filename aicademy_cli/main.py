@@ -168,6 +168,16 @@ def clear(
     question.clear(question_id=question_id, verbose=verbose)
 
 
+@app.command()
+def restart(
+    question_id: str = typer.Argument(None, help="Question ID (auto-detected from active session)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full command output"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+) -> None:
+    """[bold]Shortcut:[/bold] aicademy restart (same as aicademy question restart)"""
+    question.restart(question_id=question_id, verbose=verbose, yes=yes)
+
+
 # Welcome banner when --help is shown
 def _version_callback(value: bool) -> None:
     if value:

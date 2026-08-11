@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import respx
@@ -296,3 +297,134 @@ async def test_pick_question_interactively_returns_none_when_no_matches(
         result = await question._pick_question_interactively(category="cks", level=None)
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_or_expire_returns_fresh_session_unchanged(
+    temp_config: Path,
+) -> None:
+    session = {
+        "questionId": "cka-01",
+        "clusterName": "aicademy-cka-01",
+        "sessionId": "sess-1",
+        "startedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    config.set_active_session(session)
+
+    with patch.object(question, "_teardown_cluster", AsyncMock()) as fake_teardown:
+        result = await question._get_active_session_or_expire()
+
+    fake_teardown.assert_not_called()
+    assert result == session
+    assert config.get_active_session() == session
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_or_expire_cleans_up_expired_session(
+    temp_config: Path,
+) -> None:
+    """Regression test: a question left "in progress" must not hang forever
+    -- past SESSION_MAX_AGE_HOURS, the next command to touch it should tear
+    down its cluster and clear the local session automatically."""
+    started = datetime.now(timezone.utc) - timedelta(hours=config.SESSION_MAX_AGE_HOURS + 1)
+    session = {
+        "questionId": "cka-01",
+        "clusterName": "aicademy-cka-01",
+        "sessionId": "sess-1",
+        "startedAt": started.isoformat().replace("+00:00", "Z"),
+    }
+    config.set_active_session(session)
+
+    with patch.object(question, "_teardown_cluster", AsyncMock()) as fake_teardown:
+        result = await question._get_active_session_or_expire()
+
+    fake_teardown.assert_awaited_once_with("aicademy-cka-01", "sess-1", False)
+    assert result is None
+    assert config.get_active_session() is None
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_or_expire_returns_none_when_no_session(
+    temp_config: Path,
+) -> None:
+    with patch.object(question, "_teardown_cluster", AsyncMock()) as fake_teardown:
+        result = await question._get_active_session_or_expire()
+
+    fake_teardown.assert_not_called()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_restart_async_tears_down_and_restarts_same_question(
+    temp_config: Path,
+) -> None:
+    config.save_config({"token": "test-token"})
+    session = {
+        "questionId": "cka-01",
+        "clusterName": "aicademy-cka-01",
+        "sessionId": "sess-1",
+    }
+    config.set_active_session(session)
+
+    with (
+        patch.object(question, "_teardown_cluster", AsyncMock()) as fake_teardown,
+        patch.object(question, "_start_async", AsyncMock()) as fake_start,
+    ):
+        await question._restart_async(question_id=None, verbose=False, yes=True)
+
+    fake_teardown.assert_awaited_once_with("aicademy-cka-01", "sess-1", False)
+    assert config.get_active_session() is None
+    fake_start.assert_awaited_once_with("cka-01", False)
+
+
+@pytest.mark.asyncio
+async def test_restart_async_leaves_session_for_a_different_question_alone(
+    temp_config: Path,
+) -> None:
+    """Restarting question B while question A's session is still active must
+    not touch A's cluster -- only `clear`/the SESSION_ACTIVE prompt handle
+    that."""
+    config.save_config({"token": "test-token"})
+    config.set_active_session(
+        {"questionId": "cka-01", "clusterName": "aicademy-cka-01", "sessionId": "sess-1"}
+    )
+
+    with (
+        patch.object(question, "_teardown_cluster", AsyncMock()) as fake_teardown,
+        patch.object(question, "_start_async", AsyncMock()) as fake_start,
+    ):
+        await question._restart_async(question_id="cka-02", verbose=False, yes=True)
+
+    fake_teardown.assert_not_called()
+    fake_start.assert_awaited_once_with("cka-02", False)
+
+
+@pytest.mark.asyncio
+async def test_restart_async_no_session_and_no_question_id_errors(
+    temp_config: Path,
+) -> None:
+    config.save_config({"token": "test-token"})
+
+    with pytest.raises(typer.Exit):
+        await question._restart_async(question_id=None, verbose=False, yes=True)
+
+
+@pytest.mark.asyncio
+async def test_restart_async_declining_confirmation_aborts(temp_config: Path) -> None:
+    config.save_config({"token": "test-token"})
+    config.set_active_session(
+        {"questionId": "cka-01", "clusterName": "aicademy-cka-01", "sessionId": "sess-1"}
+    )
+
+    with (
+        patch.object(question.typer, "confirm", return_value=False),
+        patch.object(question, "_teardown_cluster", AsyncMock()) as fake_teardown,
+        patch.object(question, "_start_async", AsyncMock()) as fake_start,
+        pytest.raises(typer.Exit),
+    ):
+        await question._restart_async(question_id=None, verbose=False, yes=False)
+
+    fake_teardown.assert_not_called()
+    fake_start.assert_not_called()
+    # Declining the prompt must not have wiped the still-active session.
+    assert config.get_active_session() is not None

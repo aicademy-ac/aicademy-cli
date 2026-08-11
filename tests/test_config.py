@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -66,6 +67,28 @@ def test_token_falls_back_to_file_when_keyring_unavailable(temp_config: Path) ->
 
         config.delete_token()
         assert config.get_token() is None
+
+
+def test_is_session_expired_true_after_max_age() -> None:
+    started = datetime.now(timezone.utc) - timedelta(hours=config.SESSION_MAX_AGE_HOURS + 1)
+    session = {"startedAt": started.isoformat().replace("+00:00", "Z")}
+    assert config.is_session_expired(session) is True
+
+
+def test_is_session_expired_false_within_max_age() -> None:
+    started = datetime.now(timezone.utc) - timedelta(hours=1)
+    session = {"startedAt": started.isoformat().replace("+00:00", "Z")}
+    assert config.is_session_expired(session) is False
+
+
+def test_is_session_expired_false_when_missing_started_at() -> None:
+    """Sessions cached by an older CLI version (no startedAt field) must not
+    be treated as expired -- there's no data to judge them by."""
+    assert config.is_session_expired({}) is False
+
+
+def test_is_session_expired_false_for_unparseable_timestamp() -> None:
+    assert config.is_session_expired({"startedAt": "not-a-date"}) is False
 
 
 def test_legacy_file_token_is_migrated_into_keyring(temp_config: Path) -> None:

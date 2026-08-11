@@ -63,10 +63,11 @@ def app_verify(
 
 async def _app_verify_async(question_id: str | None) -> None:
     from ..core import verify_engine  # deferred import — see module docstring
+    from .question import _get_active_session_or_expire  # deferred — avoids a circular import
 
     utils.require_auth()
 
-    session = config.get_active_session()
+    session = await _get_active_session_or_expire()
     if not session and not question_id:
         console.print(
             "[red]✗ No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
@@ -185,7 +186,7 @@ async def _app_verify_async(question_id: str | None) -> None:
 
         await _clear_async(question_id=question_id, verbose=False)
     elif next_step == "next":
-        await _start_next_question(qid)
+        await _start_next_question(qid, active_session)
     else:
         console.print(
             "\n[dim]You can clean it up later with: [bold]aicademy question clear[/bold][/dim]"
@@ -210,11 +211,11 @@ def _prompt_next_step() -> str:
     return "exit"
 
 
-async def _start_next_question(current_qid: str) -> None:
+async def _start_next_question(current_qid: str, active_session: dict[str, Any]) -> None:
     """(n)ext-question flow: fetch the next question this user can actually
     access and launch it directly, or explain why there isn't one --
     distinguishing "upgrade to see more" from "you're genuinely done"."""
-    from .question import _start_async
+    from .question import _start_async, _teardown_cluster
 
     try:
         next_data = await api.get_next_question(current_qid)
@@ -224,6 +225,16 @@ async def _start_next_question(current_qid: str) -> None:
 
     next_question = next_data.get("nextQuestion")
     if next_question:
+        # Tear down the just-finished question's cluster first -- otherwise
+        # it's left running while a second one is created for the next
+        # question. Only the exact cluster/session recorded for the current
+        # question is deleted, never a wildcard.
+        cluster_name = active_session.get("clusterName")
+        if cluster_name:
+            console.print(f"[dim]Cleaning up previous environment ({cluster_name})...[/dim]")
+            await _teardown_cluster(cluster_name, active_session.get("sessionId"))
+            config.set_active_session(None)
+
         next_id = next_question.get("id", "")
         console.print(
             f"\n[bold cyan]Next up:[/bold cyan] {escape_rich_markup(next_id)} — "
