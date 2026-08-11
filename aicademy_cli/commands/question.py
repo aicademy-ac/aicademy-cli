@@ -420,6 +420,7 @@ def _print_question_instructions(qid: str, q: PracticeQuestion) -> None:
     so the two never drift out of sync with each other.
     """
     from rich.markdown import Markdown
+    from rich.padding import Padding
 
     print_block(
         console,
@@ -432,28 +433,24 @@ def _print_question_instructions(qid: str, q: PracticeQuestion) -> None:
     )
 
     if q.scenario:
-        console.print("\n[bold]Scenario[/bold]")
+        console.print("\n[bold cyan]Scenario[/bold cyan]")
+        console.print("[cyan]" + "─" * min(max(len("Scenario"), 20), 60) + "[/cyan]")
         console.print(Markdown(escape_rich_markup(q.scenario)))
 
     if q.tasks:
-        console.print("\n[bold]Tasks[/bold]")
+        console.print("\n[bold cyan]Tasks[/bold cyan]")
+        console.print("[cyan]" + "─" * min(max(len("Tasks"), 20), 60) + "[/cyan]")
         for i, task in enumerate(q.tasks, 1):
-            print_block(
-                console,
-                f"Task {i}: {escape_rich_markup(task.title)}",
-                escape_rich_markup(task.description),
-                style="dim",
-            )
+            console.print(f"\n[bold]{i}. {escape_rich_markup(task.title)}[/bold]")
+            console.print(Padding(escape_rich_markup(task.description), (0, 0, 0, 3)))
 
     if q.hints:
         console.print("\n[bold dim]Hints (expand if stuck)[/bold dim]")
         for hint in q.hints:
             console.print(f"  [dim]→ {escape_rich_markup(hint)}[/dim]")
 
-    console.print(
-        "\n[dim]When done:[/dim] [bold]aicademy verify[/bold]  |  "
-        "[dim]To clean up:[/dim] [bold]aicademy question clear[/bold]"
-    )
+    console.print("\n[dim]When done:[/dim]   [bold]aicademy verify[/bold]")
+    console.print("[dim]To clean up:[/dim] [bold]aicademy question clear[/bold]")
 
 
 @app.command()
