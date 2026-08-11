@@ -5,10 +5,13 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
+from ..core.prefix_group import PrefixMatchingGroup
 from .tools import install_legacy_tool
 
 console = Console()
-app = typer.Typer(help="Deprecated commands (use `aicademy tools` instead)")
+app = typer.Typer(
+    help="Deprecated commands (use `aicademy tools` instead)", cls=PrefixMatchingGroup
+)
 
 
 @app.command("install-tool")

@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from . import __version__, config
+from . import __version__, config, state
 from .models import (
     ActiveSessionResponse,
     QuestionDetailResponse,
@@ -42,7 +42,12 @@ async def _request(method: str, url: str, **kwargs: Any) -> Any:
     try:
         resp = await _client.request(method, url, **kwargs)
     except httpx.RequestError as exc:
-        raise APIError(f"Network error: {exc}", 0, str(exc)) from exc
+        # The raw exception (connection internals, resolved IPs, etc.) is
+        # implementation detail -- keep it out of the default message and
+        # only surface it under --verbose.
+        clean_message = "Could not reach the Aicademy server. Check your internet connection."
+        detail = str(exc) if state.is_verbose() else clean_message
+        raise APIError(clean_message, 0, detail) from exc
 
     if resp.status_code >= 400:
         data: Any = resp.text
@@ -164,13 +169,59 @@ async def get_question(category: str, question_id: str) -> QuestionDetailRespons
     return response
 
 
-async def get_all_questions() -> dict[str, Any]:
+_QUESTIONS_PAGE_LIMIT = 20  # server caps `limit` at 20 (Zod schema max)
+
+
+async def get_all_questions() -> list[dict[str, Any]]:
+    """Fetch every practice question across all server pages.
+
+    /api/practice/questions paginates (max 20/page) -- fetching only page 1
+    silently truncates the catalog, so walk every page until exhausted.
+    """
+    questions: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        data = await _request(
+            "GET",
+            f"{config.API_BASE_URL}/api/practice/questions",
+            params={"page": page, "limit": _QUESTIONS_PAGE_LIMIT},
+            headers=_get_headers(),
+            timeout=10,
+        )
+        page_questions = data.get("questions", [])
+        if not page_questions:
+            break
+        questions.extend(page_questions)
+        total_pages = data.get("pagination", {}).get("totalPages", 1)
+        if page >= total_pages:
+            break
+        page += 1
+    return questions
+
+
+async def get_next_question(current_id: str | None = None) -> dict[str, Any]:
+    """Fetch the next question the user can access, walking forward from
+    `current_id`. See /api/practice/next for the exact response shape:
+    `{"nextQuestion": {...}}` or `{"nextQuestion": None, "code": ..., "message": ...}`.
+    """
     return await _request(
         "GET",
-        f"{config.API_BASE_URL}/api/practice/questions",
+        f"{config.API_BASE_URL}/api/practice/next",
+        params={"current": current_id} if current_id else None,
         headers=_get_headers(),
         timeout=10,
     )
+
+
+async def get_progress() -> dict[str, Any]:
+    """Fetch the current user's pass/fail progress, keyed by question ID."""
+    data = await _request(
+        "GET",
+        f"{config.API_BASE_URL}/api/practice/progress",
+        headers=_get_headers(),
+        timeout=10,
+    )
+    return data.get("progress", {})
 
 
 async def abandon_session(session_id: str) -> None:

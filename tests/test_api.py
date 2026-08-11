@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
 import respx
 from httpx import Response
@@ -63,3 +64,81 @@ async def test_abandon_session_patches_session_endpoint(temp_config: Path) -> No
     await api.abandon_session("sess-123")
 
     assert route.called
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_all_questions_paginates_through_all_pages(temp_config: Path) -> None:
+    """Regression test: the server caps `limit` at 20/page -- page 1 alone
+    must not silently truncate the catalog."""
+    config.save_config({"token": "test-token"})
+
+    def responder(request: httpx.Request) -> Response:
+        page = int(request.url.params.get("page", "1"))
+        pages = {
+            1: {
+                "questions": [{"id": "cka-01"}, {"id": "cka-02"}],
+                "pagination": {"page": 1, "limit": 2, "total": 3, "totalPages": 2},
+            },
+            2: {
+                "questions": [{"id": "cka-03"}],
+                "pagination": {"page": 2, "limit": 2, "total": 3, "totalPages": 2},
+            },
+        }
+        return Response(200, json=pages[page])
+
+    route = respx.get("https://www.aicademy.ac/api/practice/questions").mock(
+        side_effect=responder
+    )
+
+    questions = await api.get_all_questions()
+
+    assert [q["id"] for q in questions] == ["cka-01", "cka-02", "cka-03"]
+    assert route.call_count == 2
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_progress_returns_progress_dict(temp_config: Path) -> None:
+    config.save_config({"token": "test-token"})
+    respx.get("https://www.aicademy.ac/api/practice/progress").mock(
+        return_value=Response(
+            200, json={"progress": {"cka-01": {"status": "completed", "passed": True}}}
+        )
+    )
+
+    progress = await api.get_progress()
+
+    assert progress == {"cka-01": {"status": "completed", "passed": True}}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_network_error_message_is_clean_by_default(temp_config: Path) -> None:
+    config.save_config({"token": "test-token"})
+    respx.get("https://www.aicademy.ac/api/me").mock(side_effect=httpx.ConnectError("boom"))
+
+    with pytest.raises(api.APIError) as exc_info:
+        await api.get_me()
+
+    clean = "Could not reach the Aicademy server. Check your internet connection."
+    assert str(exc_info.value) == clean
+    assert exc_info.value.response_data == clean
+    assert "boom" not in str(exc_info.value)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_network_error_shows_raw_detail_when_verbose(temp_config: Path) -> None:
+    from aicademy_cli import state
+
+    state.set_verbose(True)
+    config.save_config({"token": "test-token"})
+    respx.get("https://www.aicademy.ac/api/me").mock(
+        side_effect=httpx.ConnectError("connection refused: boom")
+    )
+
+    with pytest.raises(api.APIError) as exc_info:
+        await api.get_me()
+
+    assert "connection refused: boom" in str(exc_info.value.response_data)

@@ -10,11 +10,15 @@ from typing import Any
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
+from rich.prompt import Prompt
 
 from .. import api, config
-from ..core import utils, verify_engine
+from ..core import utils
+from ..core.ui import print_block
 from ..core.utils import escape_rich_markup
+
+# `core.verify_engine` transitively imports the `kubernetes` SDK — deferred
+# to `_app_verify_async` so `--help`/`login`/`whoami`/etc. stay fast.
 
 
 def _sign_verification_result(
@@ -34,10 +38,14 @@ def _sign_verification_result(
     if score is not None:
         payload["score"] = score
 
+    # ensure_ascii=False: the server's canonicalizer uses JS JSON.stringify
+    # semantics, which keeps non-ASCII characters literal rather than
+    # \uXXXX-escaping them. Signatures diverge on the default otherwise.
     canonical = json.dumps(
         payload,
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -49,19 +57,19 @@ def app_verify(
         None, help="Question ID (auto-detected from active session)"
     ),
 ) -> None:
-    """
-    Verify your solution for the current practice question.
-    """
+    """Verify your solution for the current practice question."""
     asyncio.run(_app_verify_async(question_id))
 
 
 async def _app_verify_async(question_id: str | None) -> None:
+    from ..core import verify_engine  # deferred import — see module docstring
+
     utils.require_auth()
 
     session = config.get_active_session()
     if not session and not question_id:
         console.print(
-            "[red]X No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
+            "[red]✗ No active session.[/red] Run [bold]aicademy question start <id>[/bold] first."
         )
         raise typer.Exit(1)
 
@@ -70,7 +78,7 @@ async def _app_verify_async(question_id: str | None) -> None:
     cat = (session or {}).get("category", qid.split("-")[0] if qid else "")
 
     if not qid:
-        console.print("[red]X Could not determine question ID.[/red]")
+        console.print("[red]✗ Could not determine question ID.[/red]")
         raise typer.Exit(1)
 
     active_session = session or {}
@@ -81,11 +89,11 @@ async def _app_verify_async(question_id: str | None) -> None:
         qdata = await api.get_question(cat, qid)
         verify_checks = qdata.verifyChecks
     except Exception as e:
-        console.print(f"[yellow]! Could not fetch verification data from API: {e}[/yellow]")
+        console.print(f"[yellow]⚠ Could not fetch verification data from API: {e}[/yellow]")
         verify_checks = None
 
     if not verify_checks:
-        console.print("[red]X No verification checks found for this question via API.[/red]")
+        console.print("[red]✗ No verification checks found for this question via API.[/red]")
         raise typer.Exit(1)
 
     console.print("[dim]Running declarative verification engine...[/dim]\n")
@@ -118,22 +126,20 @@ async def _app_verify_async(question_id: str | None) -> None:
     result: dict[str, Any] = {"passed": all_passed, "message": message}
 
     if all_passed:
-        console.print(
-            Panel(
-                f"[bold green]OK PASSED![/bold green]\n\n{result['message']}\n\nGreat work!",
-                title="Solution Verified",
-                border_style="green",
-            )
+        print_block(
+            console,
+            "✓ Solution Verified",
+            f"{result['message']}\n\nGreat work!",
+            style="green",
         )
     else:
-        console.print(
-            Panel(
-                f"[bold red]X Not yet passing[/bold red]\n\n{result['message']}\n\n"
-                "Keep troubleshooting. Run [bold]aicademy question instructions[/bold] "
-                "to review tasks.",
-                title="Verify Failed",
-                border_style="red",
-            )
+        print_block(
+            console,
+            "✗ Verify Failed",
+            f"{result['message']}\n\n"
+            "Keep troubleshooting. Run [bold]aicademy question instructions[/bold] "
+            "to review tasks.",
+            style="red",
         )
 
     # Report result to API, whether passed or failed
@@ -168,14 +174,74 @@ async def _app_verify_async(question_id: str | None) -> None:
                 f"{e.response_data}[/yellow]"
             )
 
-    if all_passed:
-        if typer.confirm("\nWould you like to clear the practice environment now?"):
-            from .question import _clear_async
-
-            await _clear_async(question_id=question_id, verbose=False)
-        else:
-            console.print(
-                "\n[dim]You can clean it up later with: [bold]aicademy question clear[/bold][/dim]"
-            )
-    else:
+    if not all_passed:
+        # Failed: results are already printed above. Nothing further to do --
+        # no prompts, no side effects. The user fixes their solution and reruns.
         raise typer.Exit(1)
+
+    next_step = _prompt_next_step()
+    if next_step == "clear":
+        from .question import _clear_async
+
+        await _clear_async(question_id=question_id, verbose=False)
+    elif next_step == "next":
+        await _start_next_question(qid)
+    else:
+        console.print(
+            "\n[dim]You can clean it up later with: [bold]aicademy question clear[/bold][/dim]"
+        )
+
+
+def _prompt_next_step() -> str:
+    """Ask what to do after a pass: (c)lear & exit, (n)ext question, or
+    (x)/anything else = exit. No validation loop -- an unrecognized answer
+    is treated as "exit", not re-prompted, per the intended one-key flow."""
+    console.print()
+    raw = Prompt.ask(
+        "[bold]What next?[/bold]  [green]\\[c][/green]lear & exit   "
+        "[cyan]\\[n][/cyan]ext question   [dim]\\[x][/dim]it",
+        default="x",
+    )
+    choice = raw.strip().lower()
+    if choice.startswith("c"):
+        return "clear"
+    if choice.startswith("n"):
+        return "next"
+    return "exit"
+
+
+async def _start_next_question(current_qid: str) -> None:
+    """(n)ext-question flow: fetch the next question this user can actually
+    access and launch it directly, or explain why there isn't one --
+    distinguishing "upgrade to see more" from "you're genuinely done"."""
+    from .question import _start_async
+
+    try:
+        next_data = await api.get_next_question(current_qid)
+    except api.APIError as e:
+        console.print(f"[red]✗ Could not fetch the next question: {e.response_data}[/red]")
+        return
+
+    next_question = next_data.get("nextQuestion")
+    if next_question:
+        next_id = next_question.get("id", "")
+        console.print(
+            f"\n[bold cyan]Next up:[/bold cyan] {escape_rich_markup(next_id)} — "
+            f"{escape_rich_markup(next_question.get('title', ''))}\n"
+        )
+        await _start_async(next_id, verbose=False)
+        return
+
+    message = escape_rich_markup(str(next_data.get("message", "")))
+    if next_data.get("code") == "UPGRADE_REQUIRED":
+        upgrade_url = escape_rich_markup(
+            str(next_data.get("upgradeUrl", "https://aicademy.ac/pricing"))
+        )
+        print_block(
+            console,
+            "💳 Upgrade Required",
+            f"{message}\n\n[bold cyan]Upgrade at:[/bold cyan] {upgrade_url}",
+            style="yellow",
+        )
+    else:
+        print_block(console, "🎉 All Done", message, style="green")

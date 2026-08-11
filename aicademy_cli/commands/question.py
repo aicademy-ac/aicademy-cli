@@ -11,74 +11,157 @@ from urllib.parse import quote
 import typer
 from rich import box
 from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.prompt import Prompt
 from rich.table import Table
 
-from .. import api, config
-from ..core import cluster_setup, kind, utils
+from .. import api, config, state
+from ..core import utils
+from ..core.prefix_group import PrefixMatchingGroup
+from ..core.ui import print_block
 from ..core.utils import escape_rich_markup
-from ..models import StartSessionResponse
+from ..models import PracticeQuestion, StartSessionResponse
 from .verify import app_verify
 
+# `core.kind` / `core.cluster_setup` transitively import the `docker` and
+# `kubernetes` SDKs, which are each a few hundred ms to import. `rich.markdown`
+# pulls in `markdown-it` similarly. Deferring these to the functions that
+# actually need them keeps `--help`, `login`, `whoami`, `list`, etc. fast —
+# they never pay that cost.
+
 console = Console()
-app = typer.Typer(help="Manage practice question sessions")
+app = typer.Typer(help="Manage practice question sessions", cls=PrefixMatchingGroup)
+
+# Local display names -- the server's question-list items carry only the
+# short `category` slug (cka/ckad/cks), never a title. Bounded, unlikely to
+# change; avoids a round trip just to render a table heading.
+_CATEGORY_TITLES: dict[str, str] = {
+    "cka": "CKA — Certified Kubernetes Administrator",
+    "ckad": "CKAD — Certified Kubernetes Application Developer",
+    "cks": "CKS — Certified Kubernetes Security Specialist",
+}
+
+# Shared across list/start/launch -- OptionInfo objects are plain metadata
+# read at decoration time, safe to reuse as the default for the same named
+# flag on multiple commands (keeps help text identical everywhere for free).
+_CKA_OPT = typer.Option(False, "--cka", help="Only CKA questions")
+_CKAD_OPT = typer.Option(False, "--ckad", help="Only CKAD questions")
+_CKS_OPT = typer.Option(False, "--cks", help="Only CKS questions")
+_BEGINNER_OPT = typer.Option(False, "--beginner", help="Only beginner-level questions")
+_INTERMEDIATE_OPT = typer.Option(False, "--intermediate", help="Only intermediate-level questions")
+_ADVANCED_OPT = typer.Option(False, "--advanced", help="Only advanced-level questions")
+_EXPERT_OPT = typer.Option(False, "--expert", help="Only expert-level questions")
+
+
+def _resolve_category_flag(cka: bool, ckad: bool, cks: bool) -> str | None:
+    selected = [name for name, flag in (("cka", cka), ("ckad", ckad), ("cks", cks)) if flag]
+    if len(selected) > 1:
+        flags = ", ".join(f"--{s}" for s in selected)
+        console.print(f"[red]✗ Choose only one category flag, not {flags}.[/red]")
+        raise typer.Exit(1)
+    return selected[0] if selected else None
+
+
+def _resolve_level_flag(
+    beginner: bool, intermediate: bool, advanced: bool, expert: bool
+) -> str | None:
+    selected = [
+        name
+        for name, flag in (
+            ("beginner", beginner),
+            ("intermediate", intermediate),
+            ("advanced", advanced),
+            ("expert", expert),
+        )
+        if flag
+    ]
+    if len(selected) > 1:
+        flags = ", ".join(f"--{s}" for s in selected)
+        console.print(f"[red]✗ Choose only one level flag, not {flags}.[/red]")
+        raise typer.Exit(1)
+    return selected[0] if selected else None
 
 
 @app.command("list")
-def list_questions() -> None:
-    """List all available questions and your progress."""
-    asyncio.run(_list_questions_async())
+def list_questions(
+    cka: bool = _CKA_OPT,
+    ckad: bool = _CKAD_OPT,
+    cks: bool = _CKS_OPT,
+    beginner: bool = _BEGINNER_OPT,
+    intermediate: bool = _INTERMEDIATE_OPT,
+    advanced: bool = _ADVANCED_OPT,
+    expert: bool = _EXPERT_OPT,
+) -> None:
+    """List available questions and your progress. Filter with --cka/--ckad/--cks
+    and --beginner/--intermediate/--advanced/--expert."""
+    category = _resolve_category_flag(cka, ckad, cks)
+    level = _resolve_level_flag(beginner, intermediate, advanced, expert)
+    asyncio.run(_list_questions_async(category, level))
 
 
-async def _list_questions_async() -> None:
+async def _list_questions_async(category: str | None = None, level: str | None = None) -> None:
     utils.require_auth()
     try:
-        data = await api.get_all_questions()
+        questions = await api.get_all_questions()
     except api.APIError as e:
         console.print(f"[red]✗ Failed to load questions: {e.response_data}[/red]")
         raise typer.Exit(1) from e
 
-    questions = data.get("questions", [])
+    if category:
+        questions = [q for q in questions if q.get("category") == category]
+    if level:
+        questions = [q for q in questions if q.get("level") == level]
+
     if not questions:
-        console.print("[yellow]No questions found.[/yellow]")
+        message = (
+            "[yellow]No questions match that filter.[/yellow]"
+            if (category or level)
+            else "[yellow]No questions found.[/yellow]"
+        )
+        console.print(message)
         raise typer.Exit()
 
-    # Group by category
+    try:
+        progress = await api.get_progress()
+    except api.APIError as e:
+        console.print(f"[dim yellow]⚠ Could not load progress: {e.response_data}[/dim yellow]")
+        progress = {}
+
+    # Group by category. Questions arrive pre-grouped by category (cka, then
+    # ckad, then cks), so a plain dict preserves that display order for free.
     categories: dict[str, dict[str, Any]] = {}
     for q in questions:
-        cat = q.get("categoryId", "other")
+        cat = q.get("category", "other")
         if cat not in categories:
-            categories[cat] = {"title": q.get("categoryTitle", cat.upper()), "qs": []}
+            categories[cat] = {"title": _CATEGORY_TITLES.get(cat, cat.upper()), "qs": []}
         categories[cat]["qs"].append(q)
 
     for cat_data in categories.values():
         table = Table(
             show_header=True,
             header_style="bold cyan",
-            box=box.ROUNDED,
+            box=box.SIMPLE_HEAVY,
             title=f"[bold white]{cat_data['title']}[/bold white]",
             title_style="bold",
             title_justify="left",
         )
-        table.add_column("Status", width=18)
-        table.add_column("ID", style="cyan", width=10)
+        table.add_column("Status", width=14)
+        table.add_column("ID", style="cyan", width=9)
         table.add_column("Title")
         table.add_column("Level", width=12)
 
         for q in cat_data["qs"]:
-            if q.get("passed"):
-                status_icon = "[bold green]\\[x] Passed[/bold green]"
-            elif q.get("status") == "active":
-                status_icon = "[bold yellow]\\[>] Active[/bold yellow]"
+            qid = q.get("id", "")
+            entry = progress.get(qid, {})
+            if entry.get("passed"):
+                status_icon = "[bold green]✓ Passed[/bold green]"
+            elif entry.get("status") == "active":
+                status_icon = "[bold yellow]▸ Active[/bold yellow]"
             else:
-                status_icon = "[dim]\\[ ] Unattempted[/dim]"
+                status_icon = "[dim]· Unattempted[/dim]"
 
             table.add_row(
                 status_icon,
-                q.get("id"),
-                q.get("title"),
+                qid,
+                escape_rich_markup(q.get("title", "")),
                 q.get("level", "").capitalize(),
             )
         console.print(table)
@@ -89,33 +172,89 @@ async def _list_questions_async() -> None:
 def start(
     question_id: str | None = typer.Argument(None, help="Question ID to start, e.g. cka-01"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full command output"),
+    cka: bool = _CKA_OPT,
+    ckad: bool = _CKAD_OPT,
+    cks: bool = _CKS_OPT,
+    beginner: bool = _BEGINNER_OPT,
+    intermediate: bool = _INTERMEDIATE_OPT,
+    advanced: bool = _ADVANCED_OPT,
+    expert: bool = _EXPERT_OPT,
 ) -> None:
-    """
-    Start a practice question environment.
-    """
-    asyncio.run(_start_async(question_id, verbose))
+    """Start a practice question environment. With no ID, browse questions
+    interactively -- narrow with --cka/--ckad/--cks and level flags first."""
+    category = _resolve_category_flag(cka, ckad, cks)
+    level = _resolve_level_flag(beginner, intermediate, advanced, expert)
+    asyncio.run(_start_async(question_id, verbose, category, level))
 
 
 @app.command()
 def launch(
     question_id: str | None = typer.Argument(None, help="Question ID to start, e.g. cka-01"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full command output"),
+    cka: bool = _CKA_OPT,
+    ckad: bool = _CKAD_OPT,
+    cks: bool = _CKS_OPT,
+    beginner: bool = _BEGINNER_OPT,
+    intermediate: bool = _INTERMEDIATE_OPT,
+    advanced: bool = _ADVANCED_OPT,
+    expert: bool = _EXPERT_OPT,
 ) -> None:
     """Alias for `aicademy question start`."""
-    start(question_id=question_id, verbose=verbose)
+    category = _resolve_category_flag(cka, ckad, cks)
+    level = _resolve_level_flag(beginner, intermediate, advanced, expert)
+    asyncio.run(_start_async(question_id, verbose, category, level))
 
 
-async def _start_async(question_id: str | None, verbose: bool) -> None:
+async def _pick_question_interactively(category: str | None, level: str | None) -> str | None:
+    """No question ID given: browse and pick one. A --cka/--ckad/--cks flag
+    skips the category prompt; otherwise ask interactively. Returns None if
+    nothing matched the filter or the user cancelled (Ctrl+C/Esc) --
+    callers should treat that as a clean exit, not an error."""
+    from ..core import question_browser
+
+    try:
+        questions = await api.get_all_questions()
+    except api.APIError as e:
+        console.print(f"[red]✗ Failed to load questions: {e.response_data}[/red]")
+        raise typer.Exit(1) from e
+
+    if category is None:
+        console.print()
+        category = question_browser.pick_category()
+
+    if category:
+        questions = [q for q in questions if q.get("category") == category]
+    if level:
+        questions = [q for q in questions if q.get("level") == level]
+
+    if not questions:
+        console.print("[yellow]No questions match that filter.[/yellow]")
+        return None
+
+    try:
+        progress = await api.get_progress()
+    except api.APIError:
+        progress = {}
+
+    return question_browser.pick_question(questions, progress)
+
+
+async def _start_async(
+    question_id: str | None,
+    verbose: bool,
+    category: str | None = None,
+    level: str | None = None,
+) -> None:
+    from ..core import cluster_setup, kind  # deferred import — see module docstring
+
+    if verbose:
+        state.set_verbose(True)
     utils.require_auth()
 
     if not question_id:
-        # Interactive selection
-        await _list_questions_async()
-        console.print()
-        selected = Prompt.ask("[bold]Enter the ID of the question you want to start[/bold]")
-        if not selected:
+        question_id = await _pick_question_interactively(category, level)
+        if not question_id:
             raise typer.Exit()
-        question_id = selected
 
     qid = utils.normalize_question_id(question_id)
     if not qid:
@@ -170,7 +309,11 @@ async def _start_async(question_id: str | None, verbose: bool) -> None:
                 cluster_template=question.clusterTemplate,
             )
         except cluster_setup.ClusterSetupError as e:
-            console.print(f"[red]? Cluster setup failed: {e}[/red]")
+            console.print(f"[red]✗ Cluster setup failed: {e}[/red]")
+            console.print(
+                "[dim]The cluster was created but may be partially configured. "
+                f"Run [bold]aicademy question clear {qid}[/bold] to clean up and try again.[/dim]"
+            )
             raise typer.Exit(1) from e
 
     # Apply declarative breakers (chaos/failure injection) if provided
@@ -183,29 +326,24 @@ async def _start_async(question_id: str | None, verbose: bool) -> None:
                 cluster_template=question.clusterTemplate,
             )
         except cluster_setup.ClusterSetupError as e:
-            console.print(f"[red]? Breaker injection failed: {e}[/red]")
+            console.print(f"[red]✗ Breaker injection failed: {e}[/red]")
+            console.print(
+                "[dim]The cluster is otherwise ready. "
+                f"Run [bold]aicademy question clear {qid}[/bold] to clean up and try again.[/dim]"
+            )
             raise typer.Exit(1) from e
 
-    # Print success panel
-    md = Markdown(
-        "- **aicademy question instructions** — read full tasks\n"
-        "- **aicademy verify**                 — check your solution\n"
-        "- **aicademy question clear**         — clean up when done"
-    )
+    # Reveal: clear the noise from cluster setup, show a one-line "ready"
+    # header, then the full instructions immediately -- no separate
+    # `aicademy instructions` step required to see what to do. Skipped in
+    # --verbose mode, which implies "show me everything, don't hide it".
+    if not verbose:
+        console.clear()
     console.print(
-        Panel(
-            f"[bold green]✓ Environment Ready![/bold green]\n\n"
-            f"[bold]Question:[/bold]  {escape_rich_markup(question.title)}\n"
-            f"[bold]Level:[/bold]     {escape_rich_markup(question.level.capitalize())}\n"
-            f"[bold]Category:[/bold]  {escape_rich_markup(question.category.upper())}\n"
-            f"[bold]Cluster:[/bold]   {cluster_name}\n"
-            f"[bold]Time:[/bold]      ~{question.estimatedMinutes} minutes\n\n"
-            "[bold]Next steps:[/bold]",
-            title="🚀  Session Started",
-            border_style="green",
-        )
+        f"[bold green]✓ Lab ready:[/bold green] [white]{qid}[/white] — "
+        f"{escape_rich_markup(question.title)}  [dim]({cluster_name})[/dim]\n"
     )
-    console.print(md)
+    _print_question_instructions(qid, question)
 
 
 async def _handle_start_conflict(
@@ -214,6 +352,8 @@ async def _handle_start_conflict(
     e: api.APIError,
     verbose: bool,
 ) -> StartSessionResponse | None:
+    from ..core import kind  # deferred import — see module docstring
+
     if e.status_code != 409:
         if e.status_code == 402:
             utils.format_access_error(e)
@@ -244,7 +384,9 @@ async def _handle_start_conflict(
             f"\n[yellow]X You already have an active session for question "
             f"[bold]{active_qid}[/bold].[/yellow]"
         )
-        if typer.confirm(f"Would you like to clear '{active_qid}' and start '{qid}' instead?"):
+        if typer.confirm(
+            f"Would you like to clear '{active_qid}' and start '{qid}' instead?", default=True
+        ):
             kind.delete_cluster(f"aicademy-{active_qid}", verbose=verbose)
             if active_sid:
                 try:
@@ -269,6 +411,49 @@ async def _handle_start_conflict(
     else:
         utils.format_access_error(e)
         return None
+
+
+def _print_question_instructions(qid: str, q: PracticeQuestion) -> None:
+    """Render a question's full scenario/tasks/hints to the terminal.
+
+    Shared by `aicademy question instructions` and the post-`start` reveal
+    so the two never drift out of sync with each other.
+    """
+    from rich.markdown import Markdown
+
+    print_block(
+        console,
+        f"📋 Question {qid}",
+        f"[bold]{escape_rich_markup(q.title)}[/bold]\n\n"
+        f"[dim]Category:[/dim] {escape_rich_markup(q.category.upper())}  "
+        f"[dim]Level:[/dim] {escape_rich_markup(q.level.capitalize())}  "
+        f"[dim]Time:[/dim] ~{q.estimatedMinutes}m",
+        style="cyan",
+    )
+
+    if q.scenario:
+        console.print("\n[bold]Scenario[/bold]")
+        console.print(Markdown(escape_rich_markup(q.scenario)))
+
+    if q.tasks:
+        console.print("\n[bold]Tasks[/bold]")
+        for i, task in enumerate(q.tasks, 1):
+            print_block(
+                console,
+                f"Task {i}: {escape_rich_markup(task.title)}",
+                escape_rich_markup(task.description),
+                style="dim",
+            )
+
+    if q.hints:
+        console.print("\n[bold dim]Hints (expand if stuck)[/bold dim]")
+        for hint in q.hints:
+            console.print(f"  [dim]→ {escape_rich_markup(hint)}[/dim]")
+
+    console.print(
+        "\n[dim]When done:[/dim] [bold]aicademy verify[/bold]  |  "
+        "[dim]To clean up:[/dim] [bold]aicademy question clear[/bold]"
+    )
 
 
 @app.command()
@@ -308,7 +493,6 @@ async def _instructions_async(question_id: str | None, web: bool) -> None:
         webbrowser.open(url)
         raise typer.Exit()
 
-
     session_data = config.get_active_session() or {}
     cat = session_data.get("category", qid.split("-")[0] if qid else "")
 
@@ -324,46 +508,7 @@ async def _instructions_async(question_id: str | None, web: bool) -> None:
             console.print(f"[red]✗ {e.status_code}: {e.response_data}[/red]")
         raise typer.Exit(1) from e
 
-    q = data.question
-    tasks = q.tasks
-    hints = q.hints
-
-    console.print(
-        Panel(
-            f"[bold]{escape_rich_markup(q.title)}[/bold]\n\n"
-            f"[dim]Category:[/dim] {escape_rich_markup(q.category.upper())}  "
-            f"[dim]Level:[/dim] {escape_rich_markup(q.level.capitalize())}  "
-            f"[dim]Time:[/dim] ~{q.estimatedMinutes}m",
-            title=f"📋  Question {qid}",
-            border_style="cyan",
-        )
-    )
-
-    if q.scenario:
-        console.print("\n[bold]Scenario[/bold]")
-        console.print(Markdown(escape_rich_markup(q.scenario)))
-
-    if tasks:
-        console.print("\n[bold]Tasks[/bold]")
-        for i, task in enumerate(tasks, 1):
-            console.print(
-                Panel(
-                    f"[bold]{escape_rich_markup(task.title)}[/bold]\n\n"
-                    f"{escape_rich_markup(task.description)}",
-                    title=f"Task {i}",
-                    border_style="dim",
-                )
-            )
-
-    if hints:
-        console.print("\n[bold dim]Hints (expand if stuck)[/bold dim]")
-        for hint in hints:
-            console.print(f"  [dim]→ {escape_rich_markup(hint)}[/dim]")
-
-    console.print(
-        "\n[dim]When done:[/dim] [bold]aicademy verify[/bold]  |  "
-        "[dim]To clean up:[/dim] [bold]aicademy question clear[/bold]"
-    )
+    _print_question_instructions(qid, data.question)
 
 
 @app.command("break")
@@ -377,6 +522,8 @@ def break_env(
 
 
 async def _break_async(question_id: str | None) -> None:
+    from ..core import cluster_setup  # deferred import — see module docstring
+
     utils.require_auth()
 
     session = config.get_active_session()
@@ -392,7 +539,7 @@ async def _break_async(question_id: str | None) -> None:
     if not qid:
         console.print("[red]✗ Could not determine question ID.[/red]")
         raise typer.Exit(1)
-        
+
     cat = (session or {}).get("category", qid.split("-")[0] if qid else "")
 
     try:
@@ -423,7 +570,7 @@ async def _break_async(question_id: str | None) -> None:
         )
         console.print("[bold green]✓ Breakers applied successfully.[/bold green]")
     except cluster_setup.ClusterSetupError as e:
-        console.print(f"[red]? Breaker injection failed: {e}[/red]")
+        console.print(f"[red]✗ Breaker injection failed: {e}[/red]")
         raise typer.Exit(1) from e
 
 
@@ -431,9 +578,7 @@ async def _break_async(question_id: str | None) -> None:
 def verify(
     question_id: str = typer.Argument(None, help="Question ID (auto-detected from active session)"),
 ) -> None:
-    """
-    Verify your solution for the current practice question.
-    """
+    """Verify your solution for the current practice question."""
     app_verify(question_id=question_id)
 
 
@@ -449,6 +594,10 @@ def clear(
 
 
 async def _clear_async(question_id: str | None, verbose: bool) -> None:
+    from ..core import kind  # deferred import — see module docstring
+
+    if verbose:
+        state.set_verbose(True)
     utils.require_auth()
 
     qid = utils.normalize_question_id(question_id)
@@ -466,7 +615,6 @@ async def _clear_async(question_id: str | None, verbose: bool) -> None:
     # Delete KIND cluster
     kind.delete_cluster(cluster_name, verbose=verbose)
 
-
     # Mark session as abandoned via API
     if session_id:
         try:
@@ -478,11 +626,9 @@ async def _clear_async(question_id: str | None, verbose: bool) -> None:
             )
 
     config.set_active_session(None)
-    console.print(
-        Panel(
-            "[bold green]✓ Environment cleaned up.[/bold green]\n\n"
-            "You can now start a new question with:\n"
-            "[bold]aicademy start <question-id>[/bold]",
-            border_style="green",
-        )
+    print_block(
+        console,
+        "✓ Environment cleaned up.",
+        "You can now start a new question with:\n[bold]aicademy start <question-id>[/bold]",
+        style="green",
     )

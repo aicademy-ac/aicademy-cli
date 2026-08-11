@@ -243,7 +243,10 @@ EXISTENCE_CHECKS: dict[str, tuple[str, ExistenceMethod]] = {
     "cronjob_exists": ("batch", client.BatchV1Api.read_namespaced_cron_job),
     "storageclass_exists": ("storage", client.StorageV1Api.read_storage_class),
     "pdb_exists": ("policy", client.PolicyV1Api.read_namespaced_pod_disruption_budget),
-    "hpa_exists": ("autoscaling", client.AutoscalingV2Api.read_namespaced_horizontal_pod_autoscaler),
+    "hpa_exists": (
+        "autoscaling",
+        client.AutoscalingV2Api.read_namespaced_horizontal_pod_autoscaler,
+    ),
     "priorityclass_exists": ("scheduling", client.SchedulingV1Api.read_priority_class),
     "crd_exists": ("apiextensions", client.ApiextensionsV1Api.read_custom_resource_definition),
 }
@@ -517,7 +520,9 @@ def _read_generic_resource(
     if kind == "poddisruptionbudget":
         return apis["policy"].read_namespaced_pod_disruption_budget(name=name, namespace=namespace)
     if kind == "hpa" or kind == "horizontalpodautoscaler":
-        return apis["autoscaling"].read_namespaced_horizontal_pod_autoscaler(name=name, namespace=namespace)
+        return apis["autoscaling"].read_namespaced_horizontal_pod_autoscaler(
+            name=name, namespace=namespace
+        )
     if kind == "priorityclass":
         return apis["scheduling"].read_priority_class(name=name)
     if kind == "crd" or kind == "customresourcedefinition":

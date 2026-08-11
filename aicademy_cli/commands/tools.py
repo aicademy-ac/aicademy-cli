@@ -14,11 +14,15 @@ from urllib.parse import urlparse
 import httpx
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
+from ..core.prefix_group import PrefixMatchingGroup
+from ..core.ui import print_block
+
 console = Console()
-app = typer.Typer(help="Install and check required tools (kubectl, kind, docker)")
+app = typer.Typer(
+    help="Install and check required tools (kubectl, kind, docker)", cls=PrefixMatchingGroup
+)
 
 # ─── Tool definitions ───────────────────────────────────────────────────────────
 # Commands are now argv lists where possible to avoid shell injection.
@@ -120,7 +124,7 @@ def _install_linux_binary(tool_name: str) -> bool:
     """Download a pinned Linux binary to /usr/local/bin with checksum verification."""
     spec = _LINUX_DOWNLOADS.get(tool_name)
     if not spec:
-        console.print(f"[red]No Linux download spec for {tool_name}[/red]")
+        console.print(f"[red]✗ No Linux download spec for {tool_name}[/red]")
         return False
     tmp = _download_to_temp(spec["url"])
     try:
@@ -134,7 +138,7 @@ def _install_linux_binary(tool_name: str) -> bool:
             return False
         tmp.chmod(0o755)
         subprocess.run(["sudo", "mv", str(tmp), spec["dest"]], check=True)
-        console.print(f"[green]✔ {tool_name} installed to {spec['dest']}[/green]")
+        console.print(f"[green]✓ {tool_name} installed to {spec['dest']}[/green]")
         return True
     except (subprocess.CalledProcessError, httpx.HTTPError, OSError) as exc:
         console.print(f"[red]✗ Failed to install {tool_name}: {exc}[/red]")
@@ -165,17 +169,17 @@ def _install_linux_docker() -> bool:
 
 def _install_one_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
     if tool_name not in TOOLS:
-        console.print(f"[red]Unknown tool: {tool_name}[/red]")
+        console.print(f"[red]✗ Unknown tool: {tool_name}[/red]")
         return False
 
     tool = TOOLS[tool_name]
     install_cmd = tool.get(os_type)
     if not install_cmd:
-        console.print(f"[red]No install command for {tool_name} on {os_type}[/red]")
+        console.print(f"[red]✗ No install command for {tool_name} on {os_type}[/red]")
         return False
 
     if is_installed(tool_name):
-        console.print(f"[green]✔ {tool_name}[/green] already installed — skipping.")
+        console.print(f"[green]✓ {tool_name}[/green] already installed — skipping.")
         return True
 
     if dry_run:
@@ -193,7 +197,7 @@ def _install_one_tool(tool_name: str, os_type: str, dry_run: bool) -> bool:
         # install_cmd is an argv list (no shell=True).
         console.print(f"[dim]$ {' '.join(install_cmd)}[/dim]\n")
         subprocess.run(install_cmd, check=True)
-        console.print(f"[green]✔ {tool_name} installed successfully.[/green]")
+        console.print(f"[green]✓ {tool_name} installed successfully.[/green]")
         return True
     except subprocess.CalledProcessError as exc:
         console.print(f"[red]✗ Failed to install {tool_name}: {exc}[/red]")
@@ -211,14 +215,21 @@ def _install_tools(tools_to_process: Iterable[str], dry_run: bool = False) -> bo
 
 
 def _check_tools(tools_to_process: Iterable[str]) -> None:
+    from rich import box
+
     os_type = detect_os()
-    table = Table(title="🔍 Tool Status", border_style="dim")
-    table.add_column("Tool", style="bold")
-    table.add_column("Status")
+    table = Table(
+        title="🔍  Tool Status",
+        title_justify="left",
+        border_style="dim",
+        box=box.SIMPLE_HEAVY,
+    )
+    table.add_column("Tool", style="bold", width=10)
+    table.add_column("Status", width=13)
     table.add_column("Install Command")
     for t in tools_to_process:
         installed = is_installed(t)
-        status = "[green]✔ Installed[/green]" if installed else "[red]✗ Missing[/red]"
+        status = "[green]✓ Installed[/green]" if installed else "[red]✗ Missing[/red]"
         cmd = TOOLS[t].get(os_type, "N/A")
         display = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
         table.add_row(t, status, f"[dim]{display}[/dim]")
@@ -258,7 +269,7 @@ def tools(
         tools_to_process = ALL_TOOLS if tool.lower() == "all" else [tool.lower()]
         for t in tools_to_process:
             if t not in TOOLS:
-                console.print(f"[red]Unknown tool: {t}.[/red]")
+                console.print(f"[red]✗ Unknown tool: {t}.[/red]")
                 raise typer.Exit(1)
         success = _install_tools(tools_to_process, dry_run=dry_run)
         if not success:
@@ -270,26 +281,26 @@ def tools(
         pkg_mgr = (
             "winget" if os_type == "windows" else "brew" if os_type == "darwin" else "shell script"
         )
-        console.print(
-            Panel(
-                f"[bold]OS detected:[/bold] {os_type}\n"
-                f"[bold]Package manager:[/bold] {pkg_mgr}\n"
-                f"[bold]Tools:[/bold] {', '.join(ALL_TOOLS)}",
-                title="🛠  Tool Installation",
-                border_style="cyan",
-            )
+        print_block(
+            console,
+            "🛠 Tool Installation",
+            f"[bold]OS detected:[/bold] {os_type}\n"
+            f"[bold]Package manager:[/bold] {pkg_mgr}\n"
+            f"[bold]Tools:[/bold] {', '.join(ALL_TOOLS)}",
+            style="cyan",
         )
         success = _install_tools(ALL_TOOLS, dry_run=dry_run)
         if success:
-            console.print(
-                Panel(
-                    "[bold green]All tools ready![/bold green]\n\nYou can now run:\n"
-                    "[bold]aicademy start <question-id>[/bold]",
-                    border_style="green",
-                )
+            print_block(
+                console,
+                "✓ All tools ready!",
+                "You can now run:\n[bold]aicademy start <question-id>[/bold]",
+                style="green",
             )
         else:
-            console.print("[yellow]Some tools failed to install. Check the errors above.[/yellow]")
+            console.print(
+                "[yellow]⚠ Some tools failed to install. Check the errors above.[/yellow]"
+            )
             raise typer.Exit(1)
     else:
         # Default to check
@@ -308,7 +319,7 @@ def install_legacy_tool(
     tools_to_process = ALL_TOOLS if tool.lower() == "all" else [tool.lower()]
     for t in tools_to_process:
         if t not in TOOLS:
-            console.print(f"[red]Unknown tool: {t}.[/red]")
+            console.print(f"[red]✗ Unknown tool: {t}.[/red]")
             raise typer.Exit(1)
 
     if check:

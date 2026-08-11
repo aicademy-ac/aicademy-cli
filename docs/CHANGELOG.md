@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-08-11 — CLI Transformation: Speed, Security, and a Refined Practice Flow
+
+### Added
+
+- OS keychain-backed token storage (`keyring`: Windows Credential Manager / macOS Keychain / Linux Secret Service), with automatic fallback to the existing 0600-permission config file and transparent migration of any already-stored token.
+- Live progress bars for `kind` cluster create/delete, parsed from `kind`'s own stage output instead of a silent log capture.
+- Refined `start` → `verify` → next-question flow: existing-session conflicts default to "yes, clear and restart"; a successful `start` clears the screen and shows a one-line "lab ready" header followed by the full instructions; a passing `verify` offers (c)lear & exit, (n)ext question, or (x)it, defaulting to exit on any other key.
+- Access-tier-aware "next question" flow, backed by a new `GET /api/practice/next` endpoint on the web app — only ever suggests a question the user can access, and shows an upgrade message + link once nothing else is available for their plan.
+- Opt-out anonymous crash reporting (`aicademy config error-reporting off|on`), routed through a new authenticated `POST /api/cli-errors` endpoint on the web app so no third-party (Sentry/Axiom) credentials ever ship in the CLI package.
+- `GET /api/practice/progress` endpoint (web app) for real per-question pass/fail status.
+- `aicademy config show` / `aicademy config error-reporting` command group.
+
+### Fixed
+
+- **`aicademy list`/`ls` was silently broken**: it only fetched page 1 of the paginated `/api/practice/questions` endpoint (showing an incomplete catalog under a fake "OTHER" category) and read `categoryId`/`categoryTitle`/`status`/`passed` fields the server never sends. Now paginates fully, derives category titles locally, and merges in real progress from `/api/practice/progress`.
+- **Verification signature could silently diverge from the server's**: `json.dumps(...)` defaulted to `ensure_ascii=True`, escaping non-ASCII characters the server's JS canonicalizer keeps literal. Any check name/message containing so much as a curly quote would fail signature verification with no clue why.
+- **Severe Windows crash**: Rich's Unicode glyphs (✓ ✗ ⚠ etc.), printed throughout the CLI, raised `UnicodeEncodeError` and crashed every command on a stock `cmd.exe`/older PowerShell using the cp1252 codepage. stdout/stderr are now forced to UTF-8 with a safe fallback.
+- **Ctrl+C during cluster create/delete left an orphaned `kind` process** running in the background; the CLI now terminates it and exits cleanly instead of leaking a raw Python traceback.
+- **CLI startup was slow for every command**, including `--help`/`login`/`whoami`: the `kubernetes` and `docker` SDKs (and `rich.markdown`) were imported at module load even for commands that never touch a cluster. Deferred to only the functions that need them — cuts cold-start time roughly in half.
+- Duplicated command implementations that had quietly drifted apart: the top-level `aicademy login --token` shortcut was missing the shell-history warning and `AICADEMY_CLI_TOKEN` env var support that `aicademy auth login` had; `aicademy install-tool` printed its deprecation warning twice (once from each of two separate implementations).
+- Inconsistent status glyphs (plain "OK"/"X" text, a stray `?`, a different checkmark character in `tools.py`) unified to ✓/✗/⚠ everywhere.
+
+### Changed
+
+- Session conflict prompts ("clear the existing lab and start this one?") now default to Yes on a bare Enter, matching the intended one-key flow.
+- `legacy` command group and the deprecated `install-tool` shortcut are now hidden from `--help` (still work, for back-compat) instead of cluttering the top-level command listing.
+- Tightened table padding/column widths across `list`, `tools --check`, and the missing-prerequisites table for a denser, more scannable layout.
+
+### Files touched
+
+**aicademy-cli**: `config.py`, `auth.py`, `api.py`, `error_reporting.py` (new), `main.py`, `commands/question.py`, `commands/verify.py`, `commands/auth.py`, `commands/tools.py`, `commands/settings.py` (new), `core/kind.py`, `core/utils.py`, `pyproject.toml`, plus new/updated tests across `tests/`.
+
+**www.aicademy.ac**: `src/routes/api/practice/progress/+server.ts` (new), `src/routes/api/practice/next/+server.ts` (new), `src/routes/api/cli-errors/+server.ts` (new), `src/lib/server/logger.ts` (widened `ErrorContext.source`).
+
 ## 2026-07-14 — Phase 3/4 Completion (Launch Readiness)
 
 ### Added

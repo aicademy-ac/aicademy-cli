@@ -7,10 +7,10 @@ import shutil
 import typer
 from rich import box
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from .. import config
+from .ui import print_block
 
 console = Console()
 
@@ -103,8 +103,13 @@ def check_prerequisites() -> bool:
             missing.append(tool)
 
     if missing:
-        table = Table(title="⚠ Missing Prerequisites", border_style="yellow", box=box.ROUNDED)
-        table.add_column("Tool", style="bold")
+        table = Table(
+            title="⚠  Missing Prerequisites",
+            title_justify="left",
+            border_style="yellow",
+            box=box.SIMPLE_HEAVY,
+        )
+        table.add_column("Tool", style="bold", width=10)
         table.add_column("Install Command")
         for t in missing:
             table.add_row(t, "aicademy tools --install")
@@ -154,26 +159,21 @@ def format_access_error(e: Exception) -> None:
         upgrade_url = _sanitize_error_message(
             str(err.get("upgradeUrl", "https://aicademy.ac/practice#pricing"))
         )
-        console.print(
-            Panel(
-                f"[bold red]Access Denied — Pro Plan Required[/bold red]\n\n"
-                f"{message}\n\n"
-                f"[bold]Pro Plan Benefits:[/bold]\n{benefits}\n\n"
-                f"[bold cyan]Upgrade at:[/bold cyan] {upgrade_url}",
-                title="💳  Upgrade Required",
-                border_style="red",
-            )
+        print_block(
+            console,
+            "💳 Upgrade Required — Pro Plan",
+            f"{message}\n\n"
+            f"[bold]Pro Plan Benefits:[/bold]\n{benefits}\n\n"
+            f"[bold cyan]Upgrade at:[/bold cyan] {upgrade_url}",
+            style="red",
         )
     elif code == "SESSION_ACTIVE":
         active_qid = _sanitize_error_message(str(err.get("activeQuestionId", "unknown")))
-        console.print(
-            Panel(
-                f"[bold yellow]Active Session Exists[/bold yellow]\n\n"
-                f"{message}\n\n"
-                f"[bold]Active Question:[/bold] {active_qid}",
-                title="⚠  Session Conflict",
-                border_style="yellow",
-            )
+        print_block(
+            console,
+            "⚠ Session Conflict",
+            f"{message}\n\n[bold]Active Question:[/bold] {active_qid}",
+            style="yellow",
         )
     else:
-        console.print(f"[red]Error: {message}[/red]")
+        console.print(f"[red]✗ Error: {message}[/red]")

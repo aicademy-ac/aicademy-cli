@@ -157,9 +157,90 @@ def save_config(data: dict[str, Any]) -> None:
         raise
 
 
+_KEYRING_SERVICE = "aicademy-cli"
+_KEYRING_USERNAME = "token"
+
+# Token storage prefers the OS credential store (Windows Credential Manager /
+# macOS Keychain / Linux Secret Service) — that's real OS-level access
+# control, unlike a file on disk which any process running as the same user
+# can read. `keyring` is a hard dependency, but the *backend* it finds at
+# runtime is environment-dependent: headless Linux boxes, containers, and CI
+# runners commonly have no Secret Service daemon running. In that case every
+# keyring call raises, and we transparently fall back to the pre-existing
+# 0600/ACL-restricted config file so the CLI never breaks — it just loses the
+# OS-level protection on that specific machine.
+#
+# Broad `except Exception` here is deliberate: keyring backends can raise
+# implementation-specific errors beyond `keyring.errors.KeyringError` (e.g. a
+# missing optional backend dependency), and a credential-storage hiccup must
+# never crash login/logout.
+
+
+def _keyring_get_token() -> str | None:
+    try:
+        import keyring
+
+        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
+    except Exception:
+        return None
+
+
+def _keyring_set_token(token: str) -> bool:
+    """Store in the OS keychain. Returns True on success."""
+    try:
+        import keyring
+
+        keyring.set_password(_KEYRING_SERVICE, _KEYRING_USERNAME, token)
+        return True
+    except Exception:
+        return False
+
+
+def _keyring_delete_token() -> None:
+    try:
+        import keyring
+
+        keyring.delete_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
+    except Exception:
+        pass
+
+
 def get_token() -> str | None:
-    """Return the stored CLI token, or None if not logged in."""
-    return get_config().get("token")
+    """Return the stored CLI token: OS keychain first, then the legacy
+    config-file field (auto-migrating it into the keychain if found)."""
+    token = _keyring_get_token()
+    if token:
+        return token
+
+    cfg = get_config()
+    legacy_token = cfg.get("token")
+    if legacy_token and _keyring_set_token(legacy_token):
+        cfg.pop("token", None)
+        save_config(cfg)
+    return legacy_token
+
+
+def set_token(token: str) -> bool:
+    """Store the CLI token. Returns True if it landed in the OS keychain,
+    False if it fell back to the config file (no keychain backend available).
+    """
+    cfg = get_config()
+    in_keychain = _keyring_set_token(token)
+    if in_keychain:
+        cfg.pop("token", None)  # never leave a stale plaintext copy behind
+    else:
+        cfg["token"] = token
+    save_config(cfg)
+    return in_keychain
+
+
+def delete_token() -> None:
+    """Remove the CLI token from both the keychain and the config file."""
+    _keyring_delete_token()
+    cfg = get_config()
+    if "token" in cfg:
+        cfg.pop("token", None)
+        save_config(cfg)
 
 
 def get_active_session() -> dict[str, Any] | None:
@@ -180,3 +261,28 @@ def set_active_session(session: dict[str, Any] | None) -> None:
 def get_user_config() -> dict[str, Any]:
     """Return user-level preferences."""
     return {}
+
+
+def is_error_reporting_enabled() -> bool:
+    """Whether unhandled-crash reports may be sent to the Aicademy backend.
+
+    Opt-out, not opt-in: enabled unless the user has explicitly turned it off
+    with `aicademy config error-reporting off`.
+    """
+    return get_config().get("error_reporting", True) is not False
+
+
+def set_error_reporting(enabled: bool) -> None:
+    cfg = get_config()
+    cfg["error_reporting"] = enabled
+    save_config(cfg)
+
+
+def error_reporting_notice_shown() -> bool:
+    return get_config().get("error_reporting_notice_shown", False) is True
+
+
+def mark_error_reporting_notice_shown() -> None:
+    cfg = get_config()
+    cfg["error_reporting_notice_shown"] = True
+    save_config(cfg)

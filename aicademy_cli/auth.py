@@ -11,10 +11,10 @@ import webbrowser
 import httpx
 import typer
 from rich.console import Console
-from rich.panel import Panel
 
 from . import api, config
 from .core import utils
+from .core.ui import print_block
 
 console = Console()
 
@@ -39,7 +39,7 @@ async def _check_server_reachable() -> bool:
             return resp.status_code < 400
     except httpx.RequestError:
         console.print(
-            f"[red]Cannot connect to {base}.[/red]\n[dim]Make sure the server is running.[/dim]"
+            f"[red]✗ Cannot connect to {base}.[/red]\n[dim]Make sure the server is running.[/dim]"
         )
         return False
 
@@ -53,14 +53,12 @@ async def start_device_login(verbose: bool = False) -> None:
     user_code = _generate_user_code()
     url = f"{config.API_BASE_URL}/auth?cli=1&device_code={device_code}&user_code={user_code}"
 
-    console.print(
-        Panel(
-            "[bold]Aicademy Login[/bold]\n\n"
-            "Open the URL below in your browser to authenticate.\n"
-            f"[bold]User code:[/bold] [cyan]{user_code}[/cyan]",
-            title="Device Authentication",
-            border_style="cyan",
-        )
+    print_block(
+        console,
+        "Device Authentication",
+        "Open the URL below in your browser to authenticate.\n"
+        f"[bold]User code:[/bold] [cyan]{user_code}[/cyan]",
+        style="cyan",
     )
     console.print(f"\n  [dim]URL:[/dim] [cyan]{url}[/cyan]\n")
     webbrowser.open(url)
@@ -78,7 +76,7 @@ async def start_device_login(verbose: bool = False) -> None:
                 consecutive_404 += 1
                 if consecutive_404 == 3:
                     console.print(
-                        "[yellow]Device-code endpoint not available.[/yellow]\n"
+                        "[yellow]⚠ Device-code endpoint not available.[/yellow]\n"
                         "[dim]Your browser may show a token instead.[/dim]\n"
                         "[dim]If so, copy it and run:[/dim] "
                         "[bold]aicademy login --token <paste-token>[/bold]"
@@ -95,13 +93,13 @@ async def start_device_login(verbose: bool = False) -> None:
             approved = True
             break
         if status in ("expired", "denied"):
-            console.print(f"[red]Device login {status}. Please try again.[/red]")
+            console.print(f"[red]✗ Device login {status}. Please try again.[/red]")
             raise typer.Exit(1)
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
     if not approved:
         console.print(
-            "[red]Login timed out.[/red]\n"
+            "[red]✗ Login timed out.[/red]\n"
             "[dim]If your browser showed a token, copy it and run:[/dim]\n"
             "[bold]  aicademy login --token <paste-token>[/bold]"
         )
@@ -112,12 +110,12 @@ async def start_device_login(verbose: bool = False) -> None:
         exchange_data = await api.exchange_device_code(device_code)
     except api.APIError as e:
         detail = e.response_data or (e.args[0] if e.args else "unknown")
-        console.print(f"[red]Failed to exchange (HTTP {e.status_code}): {detail}[/red]")
+        console.print(f"[red]✗ Failed to exchange (HTTP {e.status_code}): {detail}[/red]")
         raise typer.Exit(1) from e
 
     token = exchange_data.get("token")
     if not token:
-        console.print("[red]Server did not return a token.[/red]")
+        console.print("[red]✗ Server did not return a token.[/red]")
         raise typer.Exit(1)
 
     await _store_token_after_verify(token)
@@ -134,30 +132,26 @@ async def _store_token_after_verify(token: str) -> None:
         await api.verify_token(token)
     except api.APIError as e:
         if e.status_code == 401:
-            console.print("[red]Token is invalid or expired.[/red]")
+            console.print("[red]✗ Token is invalid or expired.[/red]")
         else:
             utils.format_access_error(e)
         raise typer.Exit(1) from e
 
-    cfg = config.get_config()
-    cfg["token"] = token
-    config.save_config(cfg)
-    console.print(
-        Panel(
-            "[bold green]Logged in successfully![/bold green]\n\n"
-            "Your token is stored in [dim]~/.aicademy/config.json[/dim]",
-            title="Success",
-            border_style="green",
-        )
+    in_keychain = config.set_token(token)
+    storage_note = (
+        "Your token is stored securely in your OS keychain."
+        if in_keychain
+        else "Your token is stored in [dim]~/.aicademy/config.json[/dim] "
+        "(no OS keychain backend found on this machine)."
     )
+    print_block(console, "✓ Logged in successfully!", storage_note, style="green")
 
 
 async def perform_login(token: str | None, verbose: bool = False) -> None:
     """Entry point for any login flow."""
-    cfg = config.get_config()
-    if cfg.get("token"):
+    if config.get_token():
         console.print(
-            "[yellow]Already logged in.[/yellow] "
+            "[yellow]⚠ Already logged in.[/yellow] "
             "Use [bold]aicademy logout[/bold] first to switch accounts."
         )
         raise typer.Exit()
@@ -169,19 +163,19 @@ async def perform_login(token: str | None, verbose: bool = False) -> None:
 
 async def logout_user() -> None:
     """Log out and clear stored credentials."""
-    cfg = config.get_config()
-    if not cfg.get("token"):
-        console.print("[yellow]You are not logged in.[/yellow]")
+    token = config.get_token()
+    if not token:
+        console.print("[yellow]⚠ You are not logged in.[/yellow]")
         raise typer.Exit()
-    token = cfg["token"]
     try:
         await api.logout(token)
     except api.APIError as e:
-        console.print(f"[dim yellow]Could not sync logout: {e.response_data}[/dim yellow]")
-    cfg.pop("token", None)
+        console.print(f"[dim yellow]⚠ Could not sync logout: {e.response_data}[/dim yellow]")
+    config.delete_token()
+    cfg = config.get_config()
     cfg.pop("active_session", None)
     config.save_config(cfg)
-    console.print("[bold green]Logged out successfully.[/bold green]")
+    console.print("[bold green]✓ Logged out successfully.[/bold green]")
 
 
 async def whoami() -> None:
@@ -191,7 +185,7 @@ async def whoami() -> None:
         data = await api.get_me()
     except api.APIError as e:
         if e.status_code == 401:
-            console.print("[red]Token expired.[/red] Run [bold]aicademy login[/bold] again.")
+            console.print("[red]✗ Token expired.[/red] Run [bold]aicademy login[/bold] again.")
         else:
             utils.format_access_error(e)
         raise typer.Exit(1) from e
@@ -204,4 +198,4 @@ async def whoami() -> None:
     if email:
         body += f"\n[dim]Email:[/dim] {email}"
     body += f"\n[dim]Plan:[/dim] {plan}"
-    console.print(Panel(body, title="Logged in as", border_style="green"))
+    print_block(console, "Logged in as", body, style="green")

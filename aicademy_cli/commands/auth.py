@@ -9,9 +9,10 @@ import typer
 from rich.console import Console
 
 from .. import auth as auth_flow
+from ..core.prefix_group import PrefixMatchingGroup
 
 console = Console()
-app = typer.Typer(help="Authenticate with Aicademy")
+app = typer.Typer(help="Authenticate with Aicademy", cls=PrefixMatchingGroup)
 
 
 @app.command()
