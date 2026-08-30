@@ -76,4 +76,6 @@ async def pick_question(
         choices.append(questionary.Choice(title=title, value=qid))
     if not choices:
         return None
-    return await questionary.select(message, choices=choices, use_search_filter=True).ask_async()
+    return await questionary.select(
+        message, choices=choices, use_search_filter=True, use_jk_keys=False
+    ).ask_async()
