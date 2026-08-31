@@ -12,7 +12,7 @@ on:
 jobs:
   test:
     name: Run Tests
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +45,7 @@ jobs:
 
   build:
     name: Build Package
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -68,7 +68,7 @@ jobs:
 
   check-version:
     name: Check Version
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.check.outputs.changed }}
       version: ${{ steps.check.outputs.version }}
@@ -96,7 +96,7 @@ jobs:
     name: Publish to PyPI & GitHub Releases
     needs: [test, build, check-version]
     if: needs.check-version.outputs.changed == 'true' && github.event_name != 'pull_request'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
